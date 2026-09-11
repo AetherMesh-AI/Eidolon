@@ -172,6 +172,68 @@ def validate_pkg_info(text, tag):
         raise ValueError('PKG must install non-relocatable Eidolon.app into /Applications')
 
 
+def packaged_pty_smoke(executable, pty_root, temp):
+    # Windows GUI-subsystem Electron may not expose console output to the runner.
+    # Persist the last stage synchronously, including before native calls that
+    # could block the JS watchdog; Python's unchanged 30s bound covers those.
+    evidence = temp / 'pty-smoke.json'
+    evidence.write_text(json.dumps({'stage': 'launching'}), encoding='utf-8')
+    smoke_env = dict(os.environ, ELECTRON_RUN_AS_NODE='1',
+                     EIDOLON_TEST_PTY=str(pty_root), EIDOLON_TEST_RESULT=str(evidence))
+    smoke = """
+const fs = require('fs');
+const state = {platform: process.platform, arch: process.arch,
+  electron: process.versions.electron, abi: process.versions.modules, output: ''};
+const record = stage => {
+  state.stage = stage;
+  fs.writeFileSync(process.env.EIDOLON_TEST_RESULT, JSON.stringify(state));
+};
+record('started');
+let child;
+const timer = setTimeout(() => {
+  state.waitingAt = state.stage;
+  record('timeout');
+  try { if (child) child.kill(); } finally { process.exit(2); }
+}, 15000);
+process.on('uncaughtException', error => {
+  state.waitingAt = state.stage;
+  state.error = String(error.stack || error).slice(0, 4096);
+  record('error');
+  process.exit(1);
+});
+record('requiring');
+const pty = require(process.env.EIDOLON_TEST_PTY);
+record('spawning');
+const win = process.platform === 'win32';
+child = pty.spawn(win ? 'cmd.exe' : '/bin/sh',
+  win ? ['/d', '/s', '/c', 'echo EIDOLON_RELEASE_PTY'] : ['-c', 'printf EIDOLON_RELEASE_PTY'],
+  {env: process.env, cols: 80, rows: 24});
+record('spawned');
+child.onData(data => {
+  state.output = (state.output + data).slice(0, 4096);
+  record('data');
+});
+child.onExit(({exitCode}) => {
+  clearTimeout(timer);
+  state.exitCode = exitCode;
+  const passed = exitCode === 0 && state.output.includes('EIDOLON_RELEASE_PTY');
+  record(passed ? 'passed' : 'failed');
+  // This disposable ABI/spawn probe is complete; do not wait on PTY handles.
+  // Persist the result before exiting: console.log can be lost on Windows.
+  process.exit(passed ? 0 : 3);
+});
+"""
+    try:
+        subprocess.run([str(executable), '-e', smoke], cwd=temp, env=smoke_env, check=True, timeout=30)
+    finally:
+        print('Packaged PTY smoke evidence: ' + evidence.read_text(encoding='utf-8'), flush=True)
+    result = json.loads(evidence.read_text(encoding='utf-8'))
+    if (result.get('stage') != 'passed' or result.get('exitCode') != 0
+            or 'EIDOLON_RELEASE_PTY' not in result.get('output', '')):
+        raise ValueError('Packaged Electron exited without verified PTY success')
+    print('Packaged Electron/node-pty ABI and spawn smoke passed', flush=True)
+
+
 def package(tag, platform, arch, temp):
     variant = next(v for v in VARIANTS if v[:2] == (platform, arch))
     actual = subprocess.check_output(['node', '-p', 'process.platform+"/"+process.arch'], text=True).strip()
@@ -261,23 +323,7 @@ def package(tag, platform, arch, temp):
     pty_roots = list(unpacked.rglob('app.asar.unpacked/dist/node_modules/node-pty'))
     if len(pty_roots) != 1:
         raise ValueError('Expected exactly one packaged node-pty module')
-    smoke_env = dict(os.environ, ELECTRON_RUN_AS_NODE='1', EIDOLON_TEST_PTY=str(pty_roots[0]))
-    smoke = """
-const pty = require(process.env.EIDOLON_TEST_PTY);
-const win = process.platform === 'win32';
-const child = pty.spawn(win ? 'cmd.exe' : '/bin/sh',
-  win ? ['/d', '/s', '/c', 'echo EIDOLON_RELEASE_PTY'] : ['-c', 'printf EIDOLON_RELEASE_PTY'],
-  {env: process.env, cols: 80, rows: 24});
-let output = '';
-const timer = setTimeout(() => { child.kill(); process.exit(2); }, 15000);
-child.onData(data => { output += data; });
-child.onExit(({exitCode}) => {
-  clearTimeout(timer);
-  if (exitCode !== 0 || !output.includes('EIDOLON_RELEASE_PTY')) process.exit(3);
-  console.log('Packaged Electron/node-pty ABI and spawn smoke passed');
-});
-"""
-    subprocess.run([str(executables[0]), '-e', smoke], cwd=temp, env=smoke_env, check=True, timeout=30)
+    packaged_pty_smoke(executables[0], pty_roots[0], temp)
     assets = temp / 'assets'; assets.mkdir()
     artifact.rename(assets / name)
     print(json.dumps(file_record(assets / name)))

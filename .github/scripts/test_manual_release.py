@@ -13,6 +13,65 @@ r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
 
 
+class SmokeTests(unittest.TestCase):
+    def test_outer_timeout_and_missing_success_fail_closed_with_evidence(self):
+        import contextlib
+        import io
+        import subprocess
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for failure in [None, subprocess.TimeoutExpired('Electron', 30)]:
+                with self.subTest(failure=failure), patch.object(r.subprocess, 'run', side_effect=failure) as run:
+                    log = io.StringIO()
+                    with contextlib.redirect_stdout(log), self.assertRaises(
+                            ValueError if failure is None else subprocess.TimeoutExpired):
+                        r.packaged_pty_smoke(root / 'Eidolon.exe', root / 'node-pty', root)
+                    self.assertIn('"stage": "launching"', log.getvalue())
+                    self.assertEqual(run.call_args.kwargs['timeout'], 30)
+                    self.assertTrue(run.call_args.kwargs['check'])
+                    self.assertEqual(run.call_args.kwargs['env']['ELECTRON_RUN_AS_NODE'], '1')
+                    self.assertEqual(run.call_args.args[0][0], str(root / 'Eidolon.exe'))
+
+    def test_completion_and_failures_with_real_js_protocol_fixture(self):
+        import shutil
+        import subprocess
+        node = shutil.which('node')
+        assert node is not None, 'Offline smoke protocol tests require Node.js'
+        # Deliberately retain an event-loop handle after PTY exit. This is a
+        # protocol fixture, NOT evidence that native Windows node-pty works.
+        cases = [("throw Error('fixture native load failure')", 'error', 1),
+                 ('exports.spawn = () => ({onData() {}, onExit() {}, kill() {}})', 'timeout', 2)]
+        for output, code in [('EIDOLON_RELEASE_PTY', 0), ('wrong', 0), ('EIDOLON_RELEASE_PTY', 1)]:
+            source = ('exports.spawn = () => { setInterval(() => {}, 1000); return { '
+                      'onData(fn) { setTimeout(() => fn(' + json.dumps(output) + '), 5); }, '
+                      'onExit(fn) { setTimeout(() => fn({exitCode: ' + str(code) + '}), 20); }, '
+                      'kill() {} }; };')
+            passes = output == 'EIDOLON_RELEASE_PTY' and code == 0
+            cases.append((source, 'passed' if passes else 'failed', 0 if passes else 3))
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            addon = root / 'fake-pty.cjs'
+            for source, stage, code in cases:
+                with self.subTest(stage=stage, code=code):
+                    addon.write_text(source)
+                    if code:
+                        with self.assertRaises(subprocess.CalledProcessError) as caught:
+                            r.packaged_pty_smoke(Path(node), addon, root)
+                        self.assertEqual(caught.exception.returncode, code)
+                    else:
+                        r.packaged_pty_smoke(Path(node), addon, root)
+                    state = json.loads((root / 'pty-smoke.json').read_text())
+                    self.assertEqual(state['stage'], stage)
+                    if stage == 'passed':
+                        self.assertEqual(state['exitCode'], 0)
+                        self.assertIn('EIDOLON_RELEASE_PTY', state['output'])
+                    elif stage == 'error':
+                        self.assertIn('fixture native load failure', state['error'])
+                    elif stage == 'timeout':
+                        self.assertEqual(state['waitingAt'], 'spawned')
+
+
 class PolicyTests(unittest.TestCase):
     def test_version_and_changelog_are_data(self):
         body = '# Changes\n$(touch /tmp/never)\n`whoami`\nEOF\n${{ secrets.TOKEN }}'
