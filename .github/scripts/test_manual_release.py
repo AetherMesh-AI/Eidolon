@@ -1,0 +1,247 @@
+"""Offline release-policy tests; no GitHub credentials or network required."""
+import importlib.util
+import os
+import tempfile
+import unittest
+import json
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location('release', Path(__file__).with_name('manual_release.py'))
+r = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(r)
+
+
+class PolicyTests(unittest.TestCase):
+    def test_version_and_changelog_are_data(self):
+        body = '# Changes\n$(touch /tmp/never)\n`whoami`\nEOF\n${{ secrets.TOKEN }}'
+        self.assertEqual(r.validate_inputs('alpha-v0.1.0', body, '0.1.0'), body)
+        for tag in ['v0.1.0', 'alpha-v01.1.0', 'alpha-v0.1.0\n', '../../oops', 'alpha-v0.2.0']:
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                r.validate_inputs(tag, body, '0.1.0')
+        for body in ['', ' \n', 'a\0b', 'x' * 60001]:
+            with self.assertRaises(ValueError):
+                r.validate_inputs('alpha-v0.1.0', body, '0.1.0')
+
+    def test_exact_five_assets(self):
+        names = r.asset_names('alpha-v0.1.0')
+        self.assertEqual(names, [
+            'macos_arm64_alpha-v0.1.0.pkg',
+            'linux_arm64_alpha-v0.1.0.AppImage', 'linux_x64_alpha-v0.1.0.AppImage',
+            'windows_arm64_alpha-v0.1.0.exe', 'windows_x64_alpha-v0.1.0.exe'])
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in names:
+                (root / name).write_bytes(b'test archive')
+            records = r.local_assets(root, 'alpha-v0.1.0')
+            self.assertEqual(len(records), 5)
+            (root / 'extra.zip').write_bytes(b'bad')
+            with self.assertRaises(ValueError):
+                r.local_assets(root, 'alpha-v0.1.0')
+            (root / 'extra.zip').unlink()
+            (root / names[0]).unlink()
+            with self.assertRaises(ValueError):
+                r.local_assets(root, 'alpha-v0.1.0')
+
+    def test_native_arch_headers(self):
+        import struct
+        for arch, machine in [('arm64', 183), ('x64', 62)]:
+            data = bytearray(64); data[:5] = b'\x7fELF\x02'; data[5] = 1
+            struct.pack_into('<H', data, 18, machine)
+            self.assertEqual(r.binary_target(bytes(data)), ('linux', arch))
+        for arch, cpu in [('arm64', 0x100000c), ('x64', 0x1000007)]:
+            self.assertEqual(r.binary_target(struct.pack('<II', 0xfeedfacf, cpu) + bytes(60)), ('darwin', arch))
+        for arch, machine in [('arm64', 0xaa64), ('x64', 0x8664)]:
+            data = bytearray(256); data[:2] = b'MZ'; struct.pack_into('<I', data, 60, 128)
+            data[128:132] = b'PE\0\0'; struct.pack_into('<H', data, 132, machine)
+            self.assertEqual(r.binary_target(bytes(data)), ('win32', arch))
+        with self.assertRaises(ValueError):
+            r.binary_target(b'not a binary')
+
+    def test_server_assets_fail_closed(self):
+        local = [{'name': 'one.zip', 'size': 12, 'digest': 'sha256:abc'}]
+        remote = [dict(local[0], state='uploaded')]
+        r.verify_remote_assets(local, remote)
+        for bad in [[], remote * 2, [dict(remote[0], size=13)], [dict(remote[0], digest=None)], [dict(remote[0], state='starter')]]:
+            with self.assertRaises(ValueError):
+                r.verify_remote_assets(local, bad)
+
+
+class InstallerTests(unittest.TestCase):
+    def test_pkg_install_metadata(self):
+        good = '<pkg-info identifier="com.aethermesh-ai.eidolon" version="0.1.0" install-location="/Applications" relocatable="false"><bundle path="./Eidolon.app"/></pkg-info>'
+        r.validate_pkg_info(good, 'alpha-v0.1.0')
+        for bad in [good.replace('/Applications', '/tmp'), good.replace('0.1.0', '0.2.0'),
+                    good.replace('Eidolon.app', 'Other.app'), good.replace('false', 'true')]:
+            with self.assertRaises(ValueError):
+                r.validate_pkg_info(bad, 'alpha-v0.1.0')
+
+
+class PackagingCommandTests(unittest.TestCase):
+    def test_markdown_materialized_only_in_runner_temp_as_exact_data(self):
+        body = '# Notes\r\n$(touch NEVER_EXECUTE)\n`echo no`\n雪 "quoted"\n'
+        with tempfile.TemporaryDirectory() as td:
+            def inspect_notes(api, assets, tag, sha, actual):
+                self.assertEqual(actual, body)
+                notes = list(Path(td).rglob('notes.md'))
+                self.assertEqual(len(notes), 1)
+                self.assertEqual(notes[0].read_bytes(), body.encode('utf-8'))
+                self.assertFalse(notes[0].is_relative_to(r.ROOT))
+            env = {'RELEASE_TAG': 'alpha-v0.1.0', 'RELEASE_CHANGELOG': body,
+                   'RUNNER_TEMP': td, 'RELEASE_ASSETS': td, 'GITHUB_SHA': 'a' * 40}
+            with patch.dict(os.environ, env, clear=True), patch.object(r.sys, 'argv', ['manual_release.py', 'publish']):
+                with patch.object(r, 'API'), patch.object(r, 'publish', side_effect=inspect_notes) as publish:
+                    r.main()
+                    publish.assert_called_once()
+            self.assertEqual(list(Path(td).iterdir()), [])
+
+    def test_builder_can_never_publish(self):
+        class StopAfterBuilder(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(r.subprocess, 'check_output', return_value='darwin/arm64\n'):
+                with patch.object(r, 'run', side_effect=StopAfterBuilder) as builder:
+                    with self.assertRaises(StopAfterBuilder):
+                        r.package('alpha-v0.1.0', 'darwin', 'arm64', Path(td))
+                    args = builder.call_args.args[0]
+                    self.assertIn('--publish', args)
+                    self.assertEqual(args[args.index('--publish') + 1], 'never')
+
+    def test_five_native_installer_commands(self):
+        class StopAfterBuilder(Exception):
+            pass
+        for platform, arch, label, ext in r.VARIANTS:
+            with self.subTest(platform=platform, arch=arch), tempfile.TemporaryDirectory() as td:
+                with patch.object(r.subprocess, 'check_output', return_value=f'{platform}/{arch}\n'), patch.object(r, 'run', side_effect=StopAfterBuilder) as build:
+                    with self.assertRaises(StopAfterBuilder):
+                        r.package('alpha-v0.1.0', platform, arch, Path(td))
+                args = build.call_args.args[0]
+                self.assertIn({'darwin': 'pkg', 'linux': 'AppImage', 'win32': 'nsis'}[platform], args)
+                self.assertIn('--' + arch, args)
+                self.assertEqual(args[-2:], ['--publish', 'never'])
+                cfg = json.loads((Path(td) / 'electron-builder.json').read_text())
+                self.assertEqual(cfg['artifactName'], f'{label}_{arch}_alpha-v0.1.0.${{ext}}')
+                if platform == 'darwin':
+                    self.assertEqual(cfg['pkg']['installLocation'], '/Applications')
+                    self.assertFalse(cfg['pkg']['isRelocatable'])
+                    self.assertFalse(cfg['mac']['notarize'])
+                if platform == 'win32':
+                    self.assertFalse(cfg['nsis']['useZip'])
+                    self.assertFalse(cfg['nsis']['runAfterFinish'])
+
+
+class FakeAPI:
+    def __init__(self, fail_upload=False, collision=False):
+        self.calls = []; self.assets = []; self.release: Any = None; self.ref = None
+        self.fail_upload = fail_upload; self.collision = collision
+    def request(self, method, path, data=None, file=None, missing=False) -> Any:
+        self.calls.append((method, path))
+        if path.startswith('/git/ref/'):
+            return {'object': {'sha': self.ref}} if self.ref else None
+        if path.startswith('/releases/tags/'):
+            return self.release
+        if path == '/git/refs':
+            if self.collision: raise RuntimeError('422 existing ref')
+            self.ref = data['sha']; return {'object': {'sha': self.ref}}
+        if path == '/releases':
+            self.release = dict(data, id=7, upload_url='https://uploads.github.com/repos/test/repo/releases/7/assets{?name,label}')
+            return self.release.copy()
+        if path.startswith('https://uploads.github.com/'):
+            if self.fail_upload: raise RuntimeError('upload failed')
+            import urllib.parse
+            self.assets.append(dict(r.file_record(file), state='uploaded'))
+            return self.assets[-1]
+        if path.startswith('/releases/7/assets'):
+            return self.assets
+        if path == '/releases/7':
+            if method == 'PATCH': self.release.update(data)
+            return self.release.copy()
+        raise AssertionError(path)
+
+
+class PublicationTests(unittest.TestCase):
+    def run_release(self, api):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in r.asset_names('alpha-v0.1.0'):
+                (root / name).write_bytes(b'archive')
+            return r.publish(api, root, 'alpha-v0.1.0', 'a' * 40, '# Notes')
+
+    def test_publish_only_after_five_verified_uploads(self):
+        api = FakeAPI(); self.run_release(api)
+        self.assertFalse(api.release['draft'])
+        self.assertTrue(api.release['prerelease'])
+        self.assertEqual(api.release['name'], 'Eidolon alpha-v0.1.0')
+        patch = api.calls.index(('PATCH', '/releases/7'))
+        self.assertEqual(sum(m == 'POST' and p.startswith('https://uploads.') for m, p in api.calls[:patch]), 5)
+        self.assertIn(('GET', '/releases/7/assets?per_page=100'), api.calls[:patch])
+        self.assertEqual(api.calls[-3:], [('GET', '/releases/7'), ('GET', '/releases/7/assets?per_page=100'), ('GET', '/git/ref/tags/alpha-v0.1.0')])
+
+    def test_upload_failure_leaves_draft(self):
+        api = FakeAPI(fail_upload=True)
+        with self.assertRaises(RuntimeError): self.run_release(api)
+        self.assertTrue(api.release['draft'])
+        self.assertNotIn(('PATCH', '/releases/7'), api.calls)
+
+    def test_atomic_tag_collision_never_creates_release(self):
+        api = FakeAPI(collision=True)
+        with self.assertRaises(RuntimeError): self.run_release(api)
+        self.assertNotIn(('POST', '/releases'), api.calls)
+
+    def test_existing_tag_never_writes(self):
+        api = FakeAPI(); api.ref = 'a' * 40
+        with self.assertRaises(ValueError): self.run_release(api)
+        self.assertTrue(all(method == 'GET' for method, _ in api.calls))
+
+    def test_existing_draft_never_writes(self):
+        api = FakeAPI(); api.release = {'draft': True}
+        with self.assertRaises(ValueError): self.run_release(api)
+        self.assertTrue(all(method == 'GET' for method, _ in api.calls))
+
+    def test_corrupt_server_assets_never_publish(self):
+        class CorruptAPI(FakeAPI):
+            def request(self, method, path, data=None, file=None, missing=False):
+                result = super().request(method, path, data, file, missing)
+                if path.startswith('/releases/7/assets'):
+                    return [dict(a, digest=None) for a in result]
+                return result
+        api = CorruptAPI()
+        with self.assertRaises(ValueError): self.run_release(api)
+        self.assertTrue(api.release['draft'])
+        self.assertNotIn(('PATCH', '/releases/7'), api.calls)
+
+    def test_ref_moved_after_uploads_never_publishes(self):
+        class MovedRefAPI(FakeAPI):
+            def request(self, method, path, data=None, file=None, missing=False):
+                result = super().request(method, path, data, file, missing)
+                if path.startswith('/git/ref/') and self.assets:
+                    return {'object': {'sha': 'b' * 40}}
+                return result
+        api = MovedRefAPI()
+        with self.assertRaises(ValueError): self.run_release(api)
+        self.assertTrue(api.release['draft'])
+        self.assertNotIn(('PATCH', '/releases/7'), api.calls)
+
+    def test_bad_metadata_never_uploads(self):
+        class WrongMetadataAPI(FakeAPI):
+            def request(self, method, path, data=None, file=None, missing=False):
+                result = super().request(method, path, data, file, missing)
+                if method == 'GET' and path == '/releases/7':
+                    result['prerelease'] = False
+                return result
+        api = WrongMetadataAPI()
+        with self.assertRaises(ValueError): self.run_release(api)
+        self.assertFalse(api.assets)
+        self.assertNotIn(('PATCH', '/releases/7'), api.calls)
+
+    def test_bad_source_sha_never_writes(self):
+        for sha in ['main', 'a' * 39, '0' * 40]:
+            api = FakeAPI()
+            with self.assertRaises(ValueError):
+                r.publish(api, Path('/unused'), 'alpha-v0.1.0', sha, '# Notes')
+            self.assertFalse(api.calls)
+
+
+if __name__ == '__main__':
+    unittest.main()
