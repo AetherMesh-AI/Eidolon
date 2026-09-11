@@ -1,335 +1,63 @@
-# Hermes Agent Security Policy
+# Eidolon Security Policy
 
-This document describes Hermes Agent's trust model, names the one
-security boundary the project treats as load-bearing, and defines the
-scope for vulnerability reports.
+Eidolon is an independent, experimental project. Work toward a `v0.1.0` prerelease does not establish production readiness, a security audit, or a supported release series. No supported-version matrix, bounty, or response-time commitment is established here.
 
-## 1. Reporting a Vulnerability
+## Reporting a vulnerability
 
-Report privately via [GitHub Security Advisories](https://github.com/NousResearch/hermes-agent/security/advisories/new)
-or **security@nousresearch.com**. Do not open public issues for
-security vulnerabilities. **Hermes Agent does not operate a bug
-bounty program.**
+No private Eidolon vulnerability-reporting channel has been verified for this documentation update. Check the [repository security page](https://github.com/AetherMesh-AI/Eidolon/security) for a maintainer-published private reporting option before sharing sensitive details. The presence of this policy alone does not mean private reporting is enabled.
 
-A useful report includes:
+If no private channel is available, open a non-sensitive issue in the [Eidolon repository](https://github.com/AetherMesh-AI/Eidolon/issues) asking how to contact a maintainer privately. Do not include exploit instructions, vulnerable deployment details, private conversations, credentials, or affected user data in that request. Do not send project reports to contacts copied from the original codebase.
 
-- A concise description and severity assessment.
-- The affected component, identified by file path and line range
-  (e.g. `path/to/file.py:120-145`).
-- Environment details (`hermes --version`, commit SHA, OS, Python
-  version).
-- A reproduction against `main` or the latest release.
-- A statement of which trust boundary in §2 is crossed.
+Once a private channel is confirmed, a useful report includes:
 
-Please read §2 and §3 before submitting. Reports that demonstrate
-limits of an in-process heuristic this policy does not treat as a
-boundary will be closed as out-of-scope under §3 — but see §3.2:
-they are still welcome as regular issues or pull requests, just not
-through the private security channel.
+- A concise description, impact, and the access or prerequisites an attacker needs.
+- The affected source revision or build, dirty-state information if applicable, OS, and relevant runtime versions.
+- A minimal reproduction using disposable data and test accounts you control.
+- The component and trust boundary involved, with file and line references where useful.
+- Sanitized logs or evidence, plus any proposed mitigation.
 
----
+Do not test against another person's installation or account without permission. If credentials were exposed, revoke or rotate them through the provider; removing a log or commit does not invalidate a leaked secret.
 
-## 2. Trust Model
+## Trust model and limits
 
-Hermes Agent is a single-tenant personal agent. Its posture is
-layered, and the layers are not equally load-bearing. Reporters and
-operators should reason about them in the same terms.
+### Host access is consequential
 
-### 2.1 Definitions
+The runtime can execute commands and use file, browser, network, and integration tools. A locally running process can have access to resources available to its operating-system account. Do not treat the application as a sandbox or assume that choosing another agent creates an operating-system security boundary.
 
-- **Agent process.** The Python interpreter running Hermes Agent,
-  including any Python modules it has loaded (skills, plugins,
-  hook handlers).
-- **Terminal backend.** A pluggable execution target for the
-  `terminal()` tool. The default runs commands directly on the host.
-  Other backends run commands inside a container, cloud sandbox, or
-  remote host.
-- **Input surface.** Any channel through which content enters the
-  agent's context: operator input, web fetches, email, gateway
-  messages, file reads, MCP server responses, tool results.
-- **Trust envelope.** The set of resources an operator has implicitly
-  granted Hermes Agent access to by running it — typically, whatever
-  the operator's own user account can reach on the host.
-- **Stance.** An explicit statement in Hermes Agent's documentation
-  or code about how a consuming layer (adapter, UI, file writer,
-  shell) should treat agent output — e.g. "the dashboard renders
-  agent output as inert HTML."
+Use a separate OS account, container, VM, or appropriately configured remote environment when isolation is needed. Review exposed paths, network access, credentials, and execution backends. Isolating a terminal backend does not automatically contain the main application, its plugins, other tools, or inherited environment. No deployment isolation configuration is certified by this policy.
 
-### 2.2 The Boundary: OS-Level Isolation
+### Approvals and model instructions are not containment
 
-**The only security boundary against an adversarial LLM is the
-operating system.** Nothing inside the agent process constitutes
-containment — not the approval gate, not output redaction, not any
-pattern scanner, not any tool allowlist. Any in-process component
-that screens LLM output is a heuristic operating on an
-attacker-influenced string, and this policy treats it as such.
+External pages, files, messages, tool results, and model output can be attacker-controlled. Prompt instructions, approval dialogs, command scanners, redaction, and allowlists can reduce risk but are not an OS-level containment boundary. Do not grant broad privileges merely because a model or UI describes an action as safe.
 
-Hermes Agent supports two OS-level isolation postures. They address
-different threats and an operator should choose deliberately.
+Report concrete unintended command execution, authentication bypass, secret disclosure, unsafe rendering, or filesystem access with its actual preconditions. Do not assume a report is out of scope solely because untrusted content or a model was involved; distinguish a heuristic limitation from a breach of an enforced boundary.
 
-#### Terminal-backend isolation
+### External access requires authorization
 
-A non-default terminal backend runs LLM-emitted shell commands
-inside a container, remote host, or cloud sandbox. The file tools
-(`read_file`, `write_file`, `patch`) also run through this backend,
-since they are implemented on top of the shell contract — they
-cannot reach paths the backend doesn't expose.
+For every enabled network-facing adapter, require an explicit caller allowlist or equivalent authentication and authorization before dispatching work, resolving approvals, or returning output. Session identifiers are routing handles, not credentials. Local IPC must remain protected by OS access controls; exposing it beyond the local user requires an explicit authentication layer. These are requirements to enforce and test, not a claim that every adapter has passed review.
 
-What this confines: anything the agent does by issuing shell or
-file operations. What this does **not** confine: everything the
-agent does in its own Python process. That includes the
-code-execution tool (spawned as a host subprocess), MCP subprocesses
-(spawned from the agent's environment), plugin loading, hook
-dispatch, and skill loading (all imported into the agent
-interpreter).
+Do not expose experimental gateways or APIs directly to the public internet. Use appropriately configured network controls, restrict egress where needed, and run with least privilege rather than as an administrator. Separate instances and credentials are appropriate when callers require different trust levels; an agent role label does not enforce that separation.
 
-Terminal-backend isolation is the right posture when the concern is
-LLM-emitted destructive shell or unwanted file-tool writes, and the
-operator is otherwise trusted.
+### Prototype records are not permissions
 
-#### Whole-process wrapping
+Organization objectives, example teams, activity, local decisions, and outcomes are prototype records. Local approval does not grant runtime permissions, and a recorded outcome is not proof that work executed. Memory and cross-agent knowledge remain prototypes, not a mature access-control system. Do not rely on agent roles or apparent memory separation to protect sensitive information.
 
-Whole-process wrapping runs the entire agent process tree inside a
-sandbox. Every code path — shell, code-execution, MCP, file tools,
-plugins, hooks, skill loading — is subject to the same filesystem,
-network, process, and (where applicable) inference policy.
+### Local storage is not a privacy guarantee
 
-Hermes Agent supports this in two ways:
+The default application data home is `~/.eidolon`; compatibility configuration can override it. A separate directory does not imply encryption, enforced profile isolation, or protection from other processes running as the same user. Configured providers and integrations may receive data when used. Review their permissions and data handling before supplying private material.
 
-- **Hermes Agent's own Docker image and Compose setup.** Lighter-
-  weight; the agent runs in a standard container with operator-
-  configured mounts and network policy.
-- **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell)**.
-  OpenShell provides per-session sandboxes with declarative policy
-  across filesystem, network (L7 egress), process/syscall, and
-  inference-routing layers. Network and inference policies are
-  hot-reloadable. Credentials are injected from a Provider store
-  and never touch the sandbox filesystem.
+Use disposable data for experimental builds. Keep independent backups of important information, protect credentials with appropriate filesystem permissions or OS facilities, and inspect diagnostics before sharing them. Native startup and synthetic persistence evidence do not establish secure data handling across every path.
 
-Under a whole-process wrapper, Hermes Agent's in-process heuristics
-(§2.4) function as accident-prevention layered on top of a real
-boundary. This is the supported posture when the agent ingests
-content from surfaces the operator does not control — the open web,
-inbound email, multi-user channels, untrusted MCP servers — and for
-production or shared deployments.
+### Extensions and updates are executable trust decisions
 
-Operators running the default local backend with untrusted input
-surfaces, or running a terminal-backend sandbox and expecting it to
-contain code paths that don't go through the shell, are operating
-outside the supported security posture.
+Treat plugins, skills that invoke code, MCP servers, dependencies, installers, and update sources as code or services requiring review. Limit their credentials and privileges. A dependency pin helps identify reviewed code; it is not proof that code is safe.
 
-### 2.3 Credential Scoping
+Use only sources you have verified. A source repository, version label, or successful build is not proof of a signed artifact or a tested installation/update path. Installed-update recovery, data survival, complete AI conversation flows, first-attempt agent switching, and process cleanup must not be represented as accepted merely because other tests passed.
 
-Hermes Agent filters the environment it passes to its lower-trust
-in-process components: shell subprocesses, MCP subprocesses,
-cron job scripts, and the code-execution child. Credentials like
-provider API keys and gateway tokens are stripped by default;
-variables explicitly declared by the operator or by a loaded
-skill are passed through.
+## Contributor responsibilities
 
-This reduces casual exfiltration. It is not containment. Any
-component running inside the agent process (skills, plugins, hook
-handlers) can read whatever the agent itself can read, including
-in-memory credentials. The mitigation against a compromised
-in-process component is operator review before install (§2.4,
-§2.5), not environment scrubbing.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Security-sensitive changes should describe the boundary being enforced and include isolated tests of the real path. Never include live credentials, private profile state, or exploit-bearing user data in fixtures. Avoid logging secrets and verify exact process ownership before cleanup.
 
-### 2.4 In-Process Heuristics
+## License
 
-The following components screen or warn about LLM behavior. They
-are useful. They are not boundaries.
-
-- The **approval gate** detects common destructive shell patterns
-  and prompts the operator before execution. Shell is Turing-
-  complete; a denylist over shell strings is structurally
-  incomplete. The gate catches cooperative-mode mistakes, not
-  adversarial output.
-- **Output redaction** strips secret-like patterns from display.
-  A motivated output producer will defeat it.
-- **Skills Guard** scans installable skill content for injection
-  patterns. It is a review aid; the boundary for third-party skills
-  is operator review before install. Reviewing a skill means
-  reading its Python code and scripts, not just its SKILL.md
-  description — skills execute arbitrary Python at import time.
-
-### 2.5 Plugin Trust Model
-
-Plugins load into the agent process and run with full agent
-privileges: they can read the same credentials, call the same
-tools, register the same hooks, and import the same modules as
-anything shipped in-tree. The boundary for third-party plugins is
-operator review before install — the same rule as skills (§2.4),
-called out separately because plugins are architecturally heavier
-and often ship their own background services, network listeners,
-and dependencies.
-
-A malicious or buggy plugin is not a vulnerability in Hermes Agent
-itself. Bugs in Hermes Agent's plugin-install or plugin-discovery
-path that prevent the operator from seeing what they're installing
-are in scope under §3.1.
-
-### 2.6 External Surfaces
-
-An **external surface** is any channel outside the local agent
-process through which a caller can dispatch agent work, resolve
-approvals, or receive agent output. Each surface has its own
-authorization model, but the rules below apply uniformly.
-
-**Surfaces in Hermes Agent:**
-
-- **Gateway platform adapters.** Most messaging integrations ship as
-  bundled plugins under `plugins/platforms/<name>/` (Telegram, Discord,
-  Slack, email, SMS, etc.). Shared base types and a smaller set of
-  legacy/direct adapters live under `gateway/platforms/`
-  (`base.py`, Signal, API server, webhooks, …), with discovery and
-  deferred loading via `gateway/platform_registry.py`.
-- **Network-exposed HTTP surfaces.** The API server adapter, the
-  dashboard plugin, the kanban plugin's HTTP endpoints, and any
-  other plugin that binds a listening socket.
-- **Editor / IDE adapters.** The ACP adapter (`acp_adapter/`) and
-  equivalent integrations that accept requests from a local client
-  process.
-- **The TUI gateway (`tui_gateway/`).** JSON-RPC backend for the
-  Ink terminal UI, reached over local IPC.
-
-**Uniform rules:**
-
-1. **Authorization is required at every surface that crosses a
-   trust boundary.** For messaging and network HTTP surfaces, the
-   boundary is the network: authorization means an operator-
-   configured caller allowlist. For editor and local-IPC surfaces
-   (ACP, TUI gateway), the boundary is the host's user account:
-   authorization means relying on OS-level access control (file
-   permissions, loopback-only binds) and not exposing the surface
-   beyond the local user without an explicit network auth layer.
-2. **An allowlist is required for every enabled network-exposed
-   adapter.** Adapters must refuse to dispatch agent work, resolve
-   approvals, or relay output until an allowlist is set. Code paths
-   that fail open when no allowlist is configured are code bugs in
-   scope under §3.1.
-3. **Session identifiers are routing handles, not authorization
-   boundaries.** Knowing another caller's session ID does not grant
-   access to their approvals or output; authorization is always
-   re-checked against the allowlist (or OS-level equivalent).
-4. **Within the authorized set, all callers are equally trusted.**
-   Hermes Agent does not model per-caller capabilities inside a
-   single adapter. Operators who need capability separation should
-   run separate agent instances with separate allowlists.
-5. **Binding a local-only surface to a non-loopback interface is a
-   break-glass operator decision (§3.2).** The dashboard and other
-   plugin HTTP servers default to loopback; exposing them via
-   `--host 0.0.0.0` or equivalent makes public-exposure hardening
-   (§4) the operator's responsibility.
-
----
-
-## 3. Scope
-
-### 3.1 In Scope
-
-- Escape from a declared OS-level isolation posture (§2.2): an
-  attacker-controlled code path reaching state that the posture
-  claimed to confine.
-- Unauthorized external-surface access: a caller outside the
-  configured authorization set (allowlist, or OS-level equivalent
-  for local-IPC surfaces) dispatching work, receiving output, or
-  resolving approvals (§2.6).
-- Credential exfiltration: leakage of operator credentials or
-  session authorization material to a destination outside the
-  trust envelope, via a mechanism that should have prevented it
-  (environment scrubbing bug, adapter logging, transport error
-  that flushes credentials to an upstream, etc.).
-- Trust-model documentation violations: code behaving contrary to
-  what this policy, Hermes Agent's own documentation, or reasonable
-  operator expectations would predict — including cases where
-  Hermes Agent has documented a stance about how its output should
-  be rendered by a consuming layer (dashboard, gateway adapter,
-  file writer, shell) and a code path breaks that stance.
-
-### 3.2 Out of Scope
-
-"Out of scope" here means "not a security vulnerability under this
-policy." It does not mean "not worth reporting." Improvements to the
-in-process heuristics, hardening ideas, and UX fixes are welcome as
-regular issues or pull requests — the approval gate can always catch
-more patterns, redaction can always get smarter, adapter behavior
-can always be tightened. These items just don't go through the
-private-disclosure channel and don't receive advisories.
-
-- **Bypasses of in-process heuristics (§2.4)** — approval-gate regex
-  bypasses, redaction bypasses, Skills Guard pattern bypasses, and
-  analogous reports against future heuristics. These components are
-  not boundaries; defeating them is not a vulnerability under this
-  policy.
-- **Prompt injection per se.** Getting the LLM to emit unusual
-  output — via injected content, hallucination, training artifacts,
-  or any other cause — is not itself a vulnerability. "I achieved
-  prompt injection" without a chained §3.1 outcome is not an
-  actionable report under this policy.
-- **Consequences of a chosen isolation posture.** Reports that a
-  code path operating within its posture's scope can do what that
-  posture permits are not vulnerabilities. Examples: shell or file
-  tools reaching host state under the local backend; code-execution
-  or MCP subprocesses reaching host state under terminal-backend
-  isolation that only sandboxes shell; reports whose preconditions
-  require pre-existing write access to operator-owned configuration
-  or credential files (those are already inside the trust envelope).
-- **Documented break-glass settings.** Operator-selected trade-offs
-  that explicitly disable protections: `--insecure` and equivalent
-  flags on the dashboard or other components, disabled approvals,
-  local backend in production, development profiles that bypass
-  hermes-home security, and similar. Reports against those
-  configurations are not vulnerabilities — that's the flag's job.
-- **Community-contributed skills and plugins.** Third-party skills
-  (including the community skills repository) and third-party
-  plugins are in the operator's review surface, not Hermes Agent's
-  trust surface (§2.4, §2.5). A skill or plugin doing something
-  malicious is the expected failure mode of one that wasn't
-  reviewed, not a vulnerability in Hermes Agent. Bugs in Hermes
-  Agent's skill-install or plugin-install path that prevent the
-  operator from seeing what they're installing are in scope under
-  §3.1.
-- **Public exposure without external controls.** Exposing the
-  gateway or API to the public internet without authentication,
-  VPN, or firewall.
-- **Tool-level read/write restrictions on a posture where shell is
-  permitted.** If a path is reachable via the terminal tool, reports
-  that other file tools can reach it add nothing.
-
----
-
-## 4. Deployment Hardening
-
-The single most important hardening decision is matching isolation
-(§2.2) to the trust of the content the agent will ingest. Beyond
-that:
-
-- Run the agent as a non-root user. The supplied container image
-  does this by default.
-- Keep credentials in the operator credential file with tight
-  permissions, never in the main config, never in version control.
-  Under OpenShell, use the Provider store rather than an on-disk
-  credential file.
-- Do not expose the gateway or API to the public internet without
-  VPN, Tailscale, or firewall protection. Under OpenShell, use the
-  network policy layer to restrict egress.
-- Configure a caller allowlist for every network-exposed adapter
-  you enable (§2.6).
-- Review third-party skills and plugins before install (§2.4,
-  §2.5). For skills, this means reading the Python and scripts,
-  not just SKILL.md. Skills Guard reports and the install audit
-  log are the review surface.
-- Hermes Agent includes supply-chain guards for MCP server
-  launches and for dependency / bundled-package changes in CI; see
-  `CONTRIBUTING.md` for specifics.
-
----
-
-## 5. Disclosure
-
-- **Coordinated disclosure window:** 90 days from report, or until a
-  fix is released, whichever comes first.
-- **Channel:** the GHSA thread or email correspondence with
-  security@nousresearch.com.
-- **Credit:** reporters are credited in release notes unless
-  anonymity is requested.
+The [MIT license](LICENSE), including its existing copyright, permission notice, and warranty disclaimer, remains applicable. This policy does not replace those terms.

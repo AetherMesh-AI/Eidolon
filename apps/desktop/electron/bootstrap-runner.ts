@@ -192,7 +192,7 @@ function bootstrapCacheDir(hermesHome) {
 }
 
 // The install.sh / install.ps1 that ships inside the already-installed agent
-// checkout under ~/.hermes/hermes-agent. Used as a last-resort fallback when
+// checkout under ~/.eidolon/hermes-agent. Used as a last-resort fallback when
 // the pinned commit can't be fetched from GitHub (e.g. a locally-built desktop
 // app stamped to an unpushed HEAD).
 function installedAgentInstallScript(hermesHome) {
@@ -233,7 +233,7 @@ function downloadInstallScript(ref, destPath) {
   // ref so local builds can still bootstrap without pretending the all-zero
   // placeholder is a real GitHub commit.
   const scriptName = installScriptName()
-  const url = `https://raw.githubusercontent.com/NousResearch/hermes-agent/${ref}/scripts/${scriptName}`
+  const url = `https://raw.githubusercontent.com/AetherMesh-AI/Eidolon/${ref}/scripts/${scriptName}`
 
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
@@ -347,16 +347,20 @@ async function resolveInstallScript({
   const cached = cachedScriptPath(hermesHome, installRef.cacheKey)
   const resolvedCommit = installRef.pinned ? installRef.ref : null
 
-  try {
-    await fsp.access(cached, fs.constants.R_OK)
-    emit({
-      type: 'log',
-      line: `[bootstrap] using cached ${installScriptName()} for ${installRef.ref.slice(0, 12)}`
-    })
+  // Older versions cached arbitrary installed-agent bytes under the pin.
+  // A filename is not provenance: pinned installers always require a new fetch.
+  if (!installRef.pinned) {
+    try {
+      await fsp.access(cached, fs.constants.R_OK)
+      emit({
+        type: 'log',
+        line: `[bootstrap] using cached ${installScriptName()} for ${installRef.ref.slice(0, 12)}`
+      })
 
-    return { path: cached, source: 'cache', commit: resolvedCommit, kind: installScriptKind() }
-  } catch {
-    // not cached; download
+      return { path: cached, source: 'cache', commit: resolvedCommit, kind: installScriptKind() }
+    } catch {
+      // not cached; download
+    }
   }
 
   emit({
@@ -372,11 +376,14 @@ async function resolveInstallScript({
 
     return { path: cached, source: 'download', commit: resolvedCommit, kind: installScriptKind() }
   } catch (err) {
-    // The pinned commit may not be fetchable from GitHub -- most commonly a
-    // locally-built desktop app stamped to an unpushed HEAD (see
-    // write-build-stamp.mjs fromLocalGit). Fall back to the installer that
-    // ships inside the already-installed agent checkout so dev/self-builds can
-    // still bootstrap instead of dying with a fatal 404.
+    if (installRef.pinned) {
+      // Never label an unrelated installed checkout as the requested commit.
+      throw err
+    }
+
+    // Only an unpinned branch request can reach this compatibility fallback.
+    // A pinned fetch failure (including an unpushed local build stamp) is
+    // rethrown above, never replaced with an unrelated installed script.
     const installed = installedAgentInstallScript(hermesHome)
 
     if (installed) {

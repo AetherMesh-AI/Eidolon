@@ -640,25 +640,35 @@ def _reap_orphaned_desktop_local_serves(
     matched = [pid for pid, cmd in scanned
                if _is_desktop_local_serve_cmdline(cmd) and pid not in owned_now
                and _process_ppid(pid) in (0, 1) and _is_stale_orphan(pid)]
+    from hermes_cli.process_identity import owned_process_start_time
+
+    identities = {pid: owned_process_start_time(pid, "serve") for pid in matched}
+    matched = [pid for pid in matched if identities[pid] is not None]
     if not matched:
         return _empty_result()
     killed: list[int] = []
     failed: list[int] = []
+    signalled: list[int] = []
     for pid in matched:
         try:
+            if (pid in _owned_pids() or _process_ppid(pid) not in (0, 1)
+                    or owned_process_start_time(pid, "serve") != identities[pid]):
+                continue
             os.kill(pid, signal_term)
+            signalled.append(pid)
         except ProcessLookupError:
             continue
         except OSError:
             failed.append(pid)
-    # Brief grace, then SIGKILL survivors (psutil.pid_exists: os.kill(pid, 0) is a Windows footgun).
+    # Brief grace, then SIGKILL only the same owned incarnation we actually signalled.
     sleep_fn(1.5)
     import psutil
-    for pid in matched:
-        if pid in failed:
-            continue
+    for pid in signalled:
         try:
             if psutil.pid_exists(pid):
+                if (pid in _owned_pids() or _process_ppid(pid) not in (0, 1)
+                        or owned_process_start_time(pid, "serve") != identities[pid]):
+                    continue
                 os.kill(pid, signal_kill)
             killed.append(pid)
         except ProcessLookupError:

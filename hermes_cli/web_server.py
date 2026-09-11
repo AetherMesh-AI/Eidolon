@@ -131,131 +131,133 @@ _DESKTOP_MCP_DISCOVERY_DELAY_S = 1.0
 
 @asynccontextmanager
 async def _lifespan(app: "FastAPI"):
-    app.state.event_channels = {}  # dict[str, set]
-    app.state.event_lock = asyncio.Lock()
-    app.state.pty_active_session_files = {}  # dict[str, Path]
-    # Serializes chat-argv resolution so concurrent /api/pty connections don't
-    # overlap ``npm install`` / ``npm run build``. Locks live on app.state (not
-    # module globals) so they bind to the running loop, not the import-time one.
-    app.state.chat_argv_lock = asyncio.Lock()
+    from hermes_cli import web_server_gateway as actions
+    from hermes_cli.web_server_lifecycle import BackendShutdownResult, retain_backend_shutdown
 
-    # Bring state.db schema current BEFORE the first session-list poll
-    # (#79531/#80037): a store left behind by `hermes update` otherwise 500s
-    # every poll while the read-probe heal loses to sibling lock contention.
-    # Daemon thread so a locked store never delays the socket (Desktop
-    # ready-probe times out at 10s, GH-73083).
-    threading.Thread(
-        target=_eager_reconcile_own_session_db,
-        daemon=True,
-        name="statedb-eager-reconcile",
-    ).start()
+    app.state.shutdown_result = None
+    reasons = []
+    tasks = []
+    threads = []
+    stop_events = []
+    hosted_groups = None
+    drain = None
 
-    # Import hermes_cli.gateway *before* the yield: on Windows + 3.11 the
-    # import holds the GIL, so run_in_executor still froze the loop 15-22s and
-    # the Desktop's 10s ready-probe timed out (GH-73083).
-    _warm_gateway_module()
+    def start_thread(name, target, args=()):
+        thread = threading.Thread(target=target, args=args, daemon=True, name=name)
+        thread.start()
+        threads.append((name, thread))
 
-    # Snapshot the checkout revision so lazy-import paths (model picker) can
-    # refuse with "restart required" after `hermes update` replaced the code
-    # (#86207); the update flow does not reliably restart the dashboard.
-    from gateway.code_skew import record_boot_fingerprint
-
-    record_boot_fingerprint()
-
-    # Hosted Bot rooms belong to the backend process. Recovery may need a
-    # contended state.db migration, so keep it off the pre-yield path: Group
-    # Chat must degrade on its own rather than block every Desktop feature.
-    from tui_gateway import methods_groups as _hosted_groups
-    import tui_gateway.server  # noqa: F401
-
-    hosted_room_start_cancel = threading.Event()
-
-    def _start_hosted_rooms() -> None:
+    def finish(name, callback):
         try:
-            _hosted_groups.start_hosted_room_service()
-        except Exception:
-            _log.exception("Hosted Group Chat recovery failed during backend startup")
-        finally:
-            if hosted_room_start_cancel.is_set():
-                _hosted_groups.stop_hosted_room_service(timeout=1.0)
-
-    hosted_room_start_thread = threading.Thread(
-        target=_start_hosted_rooms,
-        daemon=True,
-        name="hosted-room-startup",
-    )
-    hosted_room_start_thread.start()
-
-    # Desktop-spawned backends (HERMES_DESKTOP=1) fire cron jobs themselves,
-    # since the app has no gateway running the scheduler. Server `hermes
-    # dashboard` is unaffected — it relies on its own gateway.
-    cron_stop: "threading.Event | None" = None
-    cron_thread: "threading.Thread | None" = None
-    if os.getenv("HERMES_DESKTOP") == "1":
-        # Reap an orphaned gateway from an abnormal previous exit (reparented to
-        # launchd, still holding the platform WebSocket) before forking a fresh
-        # one that would race the same credential (#77276). Runs
-        # unconditionally; protection of a healthy standalone gateway lives
-        # INSIDE the reaper (registration probed with cleanup_stale=False).
-        try:
-            from hermes_cli.gateway import _reap_unsupervised_gateway_orphans
-
-            _reap_unsupervised_gateway_orphans()
-        except Exception:
-            _log.exception("Desktop startup: orphan gateway reap failed")
-
-        cron_stop = threading.Event()
-        cron_thread = threading.Thread(
-            target=_start_desktop_cron_ticker,
-            args=(cron_stop,),
-            daemon=True,
-            name="desktop-cron-ticker",
-        )
-        cron_thread.start()
-
-    # Reap idle/dead keep-alive PTY sessions (30-min TTL).
-    pty_reaper_task = asyncio.create_task(run_reaper(PTY_REGISTRY))
-    # Periodic authenticated self-test feeding the ``dashboard`` component on /api/status.
-    selftest_task = asyncio.create_task(_dashboard_selftest_loop())
-    # Live auto-archive timer, independent of list requests.
-    auto_archive_task = asyncio.create_task(_auto_archive_ticker_loop())
-
-    # Managed local runtime (local_runtime.enabled): bring llama-server back so a
-    # restart doesn't strand a llamacpp main model. Off-thread and best-effort;
-    # failure falls back to cloud providers like a cold start. Server only —
-    # models load on first inference (an empty router holds no VRAM).
-    def _boot_local_runtime():
-        try:
-            from hermes_cli.config import load_config
-            from hermes_cli.local_runtime.bootstrap import ensure_local_runtime
-
-            ensure_local_runtime(load_config())
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger(__name__).warning("local runtime boot failed: %s", exc)
-
-    threading.Thread(target=_boot_local_runtime, daemon=True, name="local-runtime-boot").start()
+            callback()
+        except BaseException as exc:
+            reasons.append(name + ("-cancelled" if isinstance(exc, asyncio.CancelledError) else "-error"))
 
     try:
-        yield
-    finally:
-        hosted_room_start_cancel.set()
-        _hosted_groups.stop_hosted_room_service(timeout=5.0)
-        hosted_room_start_thread.join(timeout=1.0)
-        if cron_stop is not None:
-            cron_stop.set()
-        pty_reaper_task.cancel()
-        selftest_task.cancel()
-        auto_archive_task.cancel()
-        await PTY_REGISTRY.close_all()
-        # Stop the managed llama-server with its parent (an orphan pins VRAM).
-        try:
-            from hermes_cli.local_runtime.bootstrap import shutdown_local_runtime
+        app.state.event_channels = {}
+        app.state.event_lock = asyncio.Lock()
+        app.state.pty_active_session_files = {}
+        # Bind the argv lock to this loop; concurrent PTYs must not overlap builds.
+        app.state.chat_argv_lock = asyncio.Lock()
+        # A contended schema migration must not delay the Desktop READY probe.
+        start_thread("statedb-eager-reconcile", _eager_reconcile_own_session_db)
+        _warm_gateway_module()
+        from gateway.code_skew import record_boot_fingerprint
+        record_boot_fingerprint()
+        from tui_gateway import methods_groups as hosted_groups
+        import tui_gateway.server  # noqa: F401
 
-            shutdown_local_runtime()
-        except Exception:  # noqa: BLE001
-            pass
+        hosted_cancel = threading.Event()
+        stop_events.append(hosted_cancel)
+
+        def start_hosted_rooms():
+            try:
+                hosted_groups.start_hosted_room_service()
+            except Exception:
+                _log.exception("Hosted Group Chat recovery failed during backend startup")
+            finally:
+                if hosted_cancel.is_set():
+                    hosted_groups.stop_hosted_room_service(timeout=1.0)
+
+        start_thread("hosted-room-startup", start_hosted_rooms)
         if os.getenv("HERMES_DESKTOP") == "1":
-            _terminate_desktop_managed_gateway()
+            try:
+                from hermes_cli.gateway import _reap_unsupervised_gateway_orphans
+                _reap_unsupervised_gateway_orphans()
+            except Exception:
+                _log.exception("Desktop startup: orphan gateway reap failed")
+            cron_stop = threading.Event()
+            stop_events.append(cron_stop)
+            start_thread("desktop-cron-ticker", _start_desktop_cron_ticker, (cron_stop,))
+
+        tasks.append(asyncio.create_task(run_reaper(PTY_REGISTRY)))
+        tasks.append(asyncio.create_task(_dashboard_selftest_loop()))
+        tasks.append(asyncio.create_task(_auto_archive_ticker_loop()))
+
+        def boot_local_runtime():
+            try:
+                from hermes_cli.config import load_config
+                from hermes_cli.local_runtime.bootstrap import ensure_local_runtime
+                ensure_local_runtime(load_config())
+            except Exception as exc:
+                _log.warning("local runtime boot failed: %s", exc)
+
+        start_thread("local-runtime-boot", boot_local_runtime)
+        yield
+    except BaseException as exc:
+        reasons.append("lifespan-cancelled" if isinstance(exc, asyncio.CancelledError) else "lifespan-error")
+        raise
+    finally:
+        # First close admission in EVERY backend mode, including partial startup.
+        # Never recreate a terminal registry: unresolved ownership must survive.
+        finish("action-fence", actions._ACTION_REGISTRY.fence)
+        try:
+            drain = actions._stop_action_processes(timeout=5.0)
+            if drain.status != "complete":
+                reasons.append("actions-incomplete")
+            # In-memory commit state is not the live driver's closure evidence.
+            if drain.transferred:
+                reasons.append("live-handoff-closure-unavailable")
+        except BaseException as exc:
+            reasons.append("action-drain-cancelled" if isinstance(exc, asyncio.CancelledError) else "action-drain-error")
+
+        for event in stop_events:
+            finish("stop-event", event.set)
+        if hosted_groups is not None:
+            finish("hosted-rooms", lambda: hosted_groups.stop_hosted_room_service(timeout=5.0))
+        for name, thread in threads:
+            def join_thread(thread=thread, name=name):
+                thread.join(timeout=1.0)
+                if thread.is_alive():
+                    reasons.append(name + "-still-running")
+            finish(name, join_thread)
+        for task in tasks:
+            finish("background-task-cancel", task.cancel)
+        if tasks:
+            try:
+                done, pending = await asyncio.wait(tasks, timeout=5.0)
+                if pending:
+                    reasons.append("background-tasks-timeout")
+                for task in done:
+                    if not task.cancelled() and task.exception() is not None:
+                        reasons.append("background-task-error")
+            except BaseException as exc:
+                reasons.append("background-tasks-cancelled" if isinstance(exc, asyncio.CancelledError) else "background-tasks-error")
+        try:
+            await PTY_REGISTRY.close_all()
+        except BaseException as exc:
+            reasons.append("pty-cancelled" if isinstance(exc, asyncio.CancelledError) else "pty-error")
+
+        def stop_runtime():
+            from hermes_cli.local_runtime.bootstrap import shutdown_local_runtime
+            shutdown_local_runtime()
+        finish("local-runtime", stop_runtime)
+        # Do not run the legacy desktop latest-handle cleanup after the registry:
+        # it can signal a protected action and throws away wait/ownership errors.
+        retain_backend_shutdown(app, BackendShutdownResult(
+            status="incomplete" if reasons else "complete",
+            reasons=tuple(dict.fromkeys(reasons)), actions=drain,
+        ))
 
 
 def _app_state_default(app: "FastAPI", name: str, factory):
@@ -1333,20 +1335,44 @@ def _run_serve(serve, config, host: str, port: int) -> None:
             except Exception:
                 pass
 
-    # ``capture_signals()`` re-raises the captured signal after graceful
-    # shutdown; console Ctrl+C lands as KeyboardInterrupt = clean exit.
-    # (Re-raised SIGTERM/SIGBREAK keep their terminate disposition.)
+    from hermes_cli.web_server_lifecycle import BackendShutdownResult, retain_backend_shutdown
+
+    # Uvicorn can consume ASGI lifespan exceptions and return normally. A stale
+    # receipt (or a prior invocation's in-memory success) must not mask that.
+    app.state.shutdown_result = None
+
+    def shutdown_result():
+        result = getattr(app.state, "shutdown_result", None)
+        if not isinstance(result, BackendShutdownResult):
+            result = retain_backend_shutdown(app, BackendShutdownResult(
+                status="incomplete", reasons=("lifespan-result-missing",),
+            ))
+        return result
+
+    # Ctrl+C is clean only after a completed lifespan. SIGTERM disposition is
+    # still owned by uvicorn; the lifespan persists evidence before re-raising.
     try:
         runner(serve(), **runner_kwargs)
     except KeyboardInterrupt:
-        return
+        pass
     except SystemExit as exc:
-        # Probe-to-bind race (#93608): uvicorn's bind_socket() exits 1 — re-check
-        # and translate a confirmed conflict into the sentinel + distinct code.
         if exc.code == 1 and _port_bind_conflict(host, port):
             _report_port_in_use(host, port)
             raise SystemExit(PORT_IN_USE_EXIT_CODE) from None
+        if exc.code in (None, 0) and shutdown_result().status != "complete":
+            raise SystemExit(1) from None
         raise
+    except BaseException:
+        result = shutdown_result()
+        retain_backend_shutdown(app, BackendShutdownResult(
+            status="incomplete", reasons=result.reasons + ("runner-error",), actions=result.actions,
+        ))
+        raise
+    finally:
+        shutdown_result()
+    if shutdown_result().status != "complete":
+        _log.error("Backend shutdown incomplete: %s", ", ".join(shutdown_result().reasons))
+        raise SystemExit(1)
 
 
 def start_server(
@@ -1422,23 +1448,24 @@ def start_server(
             config.load()
         server.lifespan = config.lifespan_class(config)
         with server.capture_signals():
-            await server.startup()
-            if server.should_exit:
-                return
+            try:
+                await server.startup()
+                if server.should_exit:
+                    return
 
-            _on_server_started(
-                server,
-                host=host,
-                port=port,
-                headless=headless,
-                open_browser=open_browser,
-                initial_profile=initial_profile,
-                start_mcp_discovery_after_bind=start_mcp_discovery_after_bind,
-            )
-
-            await server.main_loop()
-            if server.started:
-                await server.shutdown()
+                _on_server_started(
+                    server,
+                    host=host,
+                    port=port,
+                    headless=headless,
+                    open_browser=open_browser,
+                    initial_profile=initial_profile,
+                    start_mcp_discovery_after_bind=start_mcp_discovery_after_bind,
+                )
+                await server.main_loop()
+            finally:
+                if server.started:
+                    await server.shutdown()
 
     _run_serve(_serve, config, host, port)
 

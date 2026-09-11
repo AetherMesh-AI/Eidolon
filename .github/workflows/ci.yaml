@@ -221,8 +221,8 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────
   # Gate: runs after everything. ``if: always()`` ensures it reports a
-  # status even when some deps were skipped. Only actual ``failure``
-  # results cause it to fail; ``skipped`` is treated as success.
+  # status even when dependencies were skipped. Reject every non-success
+  # except skips established by valid classifier/event/dependency outputs.
   #
   # Branch protection should require ONLY this check.
   #
@@ -239,7 +239,8 @@ jobs:
       - js-tests
       - installer-tests
       - rust-tests
-      - e2e-desktop
+      # Deliberately disabled e2e-desktop is not acceptance evidence.
+      - infographic-check
       - docs-site
       - history-check
       - contributor-check
@@ -266,24 +267,67 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "$NEEDS" | python3 -c "
-          import json, sys
-          needs = json.load(sys.stdin)
-          # Emit compact {job_name: result} for the comment assembler.
-          compact = {name: info['result'] for name, info in needs.items()}
-          print(f'needs-json={json.dumps(compact)}')
-          with open('$GITHUB_OUTPUT', 'a') as f:
-              f.write(f'needs-json={json.dumps(compact)}\n')
-          failed = [name for name, info in needs.items() if info['result'] == 'failure']
-          for name, info in sorted(needs.items()):
-              result = info['result']
-              icon = '✅' if result in ('success', 'skipped') else '❌'
-              print(f'{icon} {name}: {result}')
-          if failed:
-              print(f'::error::{len(failed)} job(s) failed: {\", \".join(failed)}')
+          python3 - <<'PYEOF'
+          import json, os, sys
+
+          needs = json.loads(os.environ['NEEDS'])
+          lanes = {
+              'tests': 'python', 'tests-os': 'python', 'lint': 'python',
+              'contributor-check': 'python', 'js-tests': 'frontend',
+              'installer-tests': 'installer', 'rust-tests': 'rust',
+              'docs-site': 'site', 'uv-lockfile': 'uv_lock',
+              'docker-lint': 'docker_meta',
+          }
+          always = {'detect', 'infographic-check', 'profile-artifact-check',
+                    'case-collision-check', 'osv-scanner'}
+          expected = always | set(lanes) | {'history-check', 'lockfile-diff',
+                                           'supply-chain', 'review-labels'}
+          compact = {name: info.get('result') for name, info in needs.items()}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'needs-json={json.dumps(compact)}\n')
+          errors = []
+          if set(needs) != expected:
+              errors.append('Dependency set mismatch: missing=' + str(sorted(expected - set(needs)))
+                            + ', unexpected=' + str(sorted(set(needs) - expected)))
+          outputs = needs.get('detect', {}).get('outputs', {})
+          flags = set(lanes.values()) | {'scan', 'deps', 'npm_lock', 'ci_review', 'mcp_catalog'}
+          for flag in sorted(flags):
+              if outputs.get(flag) not in ('true', 'false'):
+                  errors.append('Missing/invalid classifier output: ' + flag)
+          event = outputs.get('event_name')
+          if event not in ('pull_request', 'push'):
+              errors.append('Missing/unsupported classifier event')
+          pr = event == 'pull_request'
+          enabled = {flag for flag in flags if outputs.get(flag) == 'true'}
+          required = always | {job for job, flag in lanes.items() if flag in enabled}
+          if pr:
+              required.add('history-check')
+              if 'npm_lock' in enabled:
+                  required.add('lockfile-diff')
+              if enabled & {'scan', 'deps'}:
+                  required.add('supply-chain')
+          critical = needs.get('supply-chain', {}).get('outputs', {}).get('critical_findings', '')
+          # The reusable workflow emits an empty value when its scan was intentionally
+          # skipped (including deps-only runs). An executed scan must emit a boolean.
+          if pr and 'scan' in enabled:
+              if critical not in ('true', 'false'):
+                  errors.append('Missing/invalid critical_findings from required scan')
+          elif critical not in ('', 'false'):
+              errors.append('Unexpected critical_findings without a required scan')
+          if pr and (enabled & {'ci_review', 'mcp_catalog'} or critical == 'true'):
+              required.add('review-labels')
+          for name in sorted(expected):
+              result = compact.get(name)
+              allowed = ('success',) if name in required else ('success', 'skipped')
+              if result not in allowed:
+                  errors.append(f'{name}: {result!r}; expected {allowed}')
+              print(f'{name}: {result}')
+          if errors:
+              for error in errors:
+                  print('::error::' + error)
               sys.exit(1)
-          print('All checks passed (or were skipped)')
-          "
+          print('All required checks passed; remaining skips are intentional')
+          PYEOF
 
   # ─────────────────────────────────────────────────────────────────────
   # CI timing report: collect per-job/step durations from the GitHub API,

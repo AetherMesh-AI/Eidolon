@@ -9,7 +9,7 @@
 
 import { useStore } from '@nanostores/react'
 import { type ComponentProps, lazy, memo, type ReactNode, Suspense, useMemo } from 'react'
-import { Navigate, Route, Routes, useParams } from 'react-router'
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router'
 
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
@@ -20,8 +20,11 @@ import { $freshDraftReady, $gatewayState } from '@/store/session'
 
 import { ChatView } from '../chat'
 import { ChatSidebar } from '../chat/sidebar'
+import { BotsPane } from '@/plugins/hermes-bots/roster-pane'
+import { OrganizationRail } from '../eidolon/rail'
+import { OrganizationWorkspace } from '../eidolon/workspace'
 import { TerminalPaneChrome } from '../right-sidebar/terminal/chrome'
-import { contributedRoutes, NEW_CHAT_ROUTE, ROUTES_AREA, sessionRoute } from '../routes'
+import { contributedRoutes, navigateToWorkspacePage, NEW_CHAT_ROUTE, ROUTES_AREA, sessionRoute } from '../routes'
 import { useStatusSnapshot } from '../shell/hooks/use-status-snapshot'
 import { useStatusbarItems } from '../shell/hooks/use-statusbar-items'
 import { ModelMenuPanel } from '../shell/model-menu-panel'
@@ -52,8 +55,9 @@ export const SidebarSurface = memo(function SidebarSurface({
   currentView: ComponentProps<typeof ChatSidebar>['currentView']
 }) {
   const latestActions = useMemo(() => latestSidebarActions(actions), [actions])
+  const navigate = useNavigate()
 
-  return <ChatSidebar currentView={currentView} {...latestActions} />
+  return <OrganizationRail onNavigate={to => navigateToWorkspacePage(navigate, to)} sessions={<BotsPane />} />
 })
 
 export const TerminalSurface = memo(function TerminalSurface() {
@@ -165,6 +169,7 @@ export const ChatRoutesSurface = memo(function ChatRoutesSurface({
 
   return (
     <Routes>
+      {['home', 'objectives', 'objectives/:objectiveId', 'organization', 'activity', 'knowledge'].map(path => <Route key={path} path={path} element={page(<OrganizationWorkspace />)} />)}
       <Route element={chatView} index />
       <Route element={chatView} path=":sessionId" />
       <Route element={page(<SkillsView setStatusbarItemGroup={setStatusbarItemGroup} />)} path="skills" />

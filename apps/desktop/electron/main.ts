@@ -466,11 +466,10 @@ import { resolvePickerDefaultPath, setActiveGatewayProfile, setWslBridgeProfileS
 
 const USER_DATA_OVERRIDE = process.env.HERMES_DESKTOP_USER_DATA_DIR
 
-if (USER_DATA_OVERRIDE) {
-  const resolvedUserData = path.resolve(USER_DATA_OVERRIDE)
-  fs.mkdirSync(resolvedUserData, { recursive: true })
-  app.setPath('userData', resolvedUserData)
-}
+// Keep renderer persistence with the independent Eidolon runtime by default.
+const desktopData = path.resolve(USER_DATA_OVERRIDE || path.join(process.env.HERMES_HOME || path.join(process.env.HOME || app.getPath('home'), '.eidolon'), 'desktop'))
+fs.mkdirSync(desktopData, { recursive: true })
+app.setPath('userData', desktopData)
 
 const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged || Boolean(process.env.HERMES_DESKTOP_IS_PACKAGED)
@@ -704,7 +703,7 @@ const SOURCE_REPO_ROOT = path.resolve(APP_ROOT, '../..')
 //
 // Schema:
 //   { schemaVersion: 1, commit, branch, builtAt, dirty, source }
-const INSTALL_STAMP_SCHEMA_VERSION = 1
+import { readInstallStampFromPaths, formatInstallStamp, formatInstallVersion } from './install-stamp'
 
 function loadInstallStamp() {
   // Try packaged location first (resources/install-stamp.json), then the
@@ -714,46 +713,16 @@ function loadInstallStamp() {
   const candidates = [
     process.resourcesPath ? path.join(process.resourcesPath, 'install-stamp.json') : null,
     path.join(APP_ROOT, 'build', 'install-stamp.json')
-  ].filter(Boolean)
+  ].filter((candidate): candidate is string => Boolean(candidate))
 
-  for (const p of candidates) {
-    try {
-      const raw = fs.readFileSync(p, 'utf8')
-      const parsed = JSON.parse(raw)
-
-      if (parsed && typeof parsed === 'object' && typeof parsed.commit === 'string' && parsed.commit.length >= 7) {
-        if (parsed.schemaVersion !== INSTALL_STAMP_SCHEMA_VERSION) {
-          console.warn(
-            `[hermes] install-stamp.json schemaVersion ${parsed.schemaVersion} != expected ${INSTALL_STAMP_SCHEMA_VERSION}; ignoring`
-          )
-
-          continue
-        }
-
-        return Object.freeze({
-          schemaVersion: parsed.schemaVersion,
-          commit: parsed.commit,
-          branch: parsed.branch || null,
-          builtAt: parsed.builtAt || null,
-          dirty: Boolean(parsed.dirty),
-          source: parsed.source || null,
-          path: p
-        })
-      }
-    } catch (e) {
-      console.warn(`[hermes] install-stamp.json found at ${p} , but parsing failed with ${e}`)
-      // Either ENOENT or malformed JSON; try the next candidate
-    }
-  }
-
-  return null
+  return readInstallStampFromPaths(candidates)
 }
 
 const INSTALL_STAMP = loadInstallStamp()
 
 if (INSTALL_STAMP) {
   console.log(
-    `[hermes] install stamp: ${INSTALL_STAMP.commit.slice(0, 12)}${INSTALL_STAMP.branch ? ` (${INSTALL_STAMP.branch})` : ''}${INSTALL_STAMP.dirty ? ' [DIRTY]' : ''} from ${INSTALL_STAMP.source || 'unknown'}`
+    `[hermes] install stamp: ${formatInstallStamp(INSTALL_STAMP)}`
   )
 } else if (IS_PACKAGED) {
   // Dev builds without a stamp are normal; packaged builds without one
@@ -783,10 +752,6 @@ function resolveHermesHome() {
     return normalizeHermesHomeRoot(process.env.HERMES_HOME)
   }
 
-  if (USER_DATA_OVERRIDE) {
-    return path.join(path.resolve(USER_DATA_OVERRIDE), 'hermes-home')
-  }
-
   if (IS_WINDOWS) {
     // A GUI app launched from Explorer inherits the environment block captured
     // at login, so a HERMES_HOME set via `setx` AFTER login is invisible in
@@ -801,20 +766,8 @@ function resolveHermesHome() {
     }
   }
 
-  if (IS_WINDOWS && process.env.LOCALAPPDATA) {
-    const localappdata = path.join(process.env.LOCALAPPDATA, 'hermes')
-    const legacy = path.join(app.getPath('home'), '.hermes')
-
-    // Migrate transparently to LOCALAPPDATA, but honour an existing legacy
-    // ~/.hermes setup (no LOCALAPPDATA install yet) so users don't lose state.
-    if (!directoryExists(localappdata) && directoryExists(legacy)) {
-      return legacy
-    }
-
-    return localappdata
-  }
-
-  return path.join(app.getPath('home'), '.hermes')
+  // Eidolon never discovers or migrates a legacy Hermes installation.
+  return path.join(process.env.HOME || app.getPath('home'), '.eidolon')
 }
 
 const HERMES_HOME = resolveHermesHome()
@@ -912,7 +865,7 @@ const BOOT_FAKE_STEP_MS = (() => {
   return Math.max(120, raw)
 })()
 
-const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Hermes'
+const APP_NAME = process.env.HERMES_DESKTOP_APP_NAME || 'Eidolon'
 const HUD_WINDOW_TITLE = `${APP_NAME} HUD`
 const TITLEBAR_HEIGHT = 34
 const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
@@ -3115,25 +3068,10 @@ function emitUpdateProgress(payload) {
 // "ref absent" (exit 2), never on a transient network error, so a flaky
 // connection can't strand a user on the wrong branch.
 async function resolveHealedBranch(updateRoot, branch) {
-  if (!branch || branch === 'main') {
-    return branch || 'main'
-  }
-
   const originUrl = await getOriginUrl(updateRoot)
-  const remote = isOfficialSshRemote(originUrl) ? OFFICIAL_REPO_HTTPS_URL : 'origin'
-  const probe = await runGit(['ls-remote', '--exit-code', '--heads', remote, branch], { cwd: updateRoot })
-
-  if (probe.code !== 2) {
-    return branch
+  if (!/^https:\/\/github\.com\/AetherMesh-AI\/Eidolon(?:\.git)?$/i.test(originUrl) && !isOfficialSshRemote(originUrl)) {
+    throw new Error('Eidolon updates require the official AetherMesh-AI/Eidolon origin; no upstream fallback.')
   }
-
-  rememberLog(`[updates] origin/${branch} is gone (merged?); falling back to main`)
-  const config = readDesktopUpdateConfig()
-
-  if (config.branch !== 'main') {
-    writeDesktopUpdateConfig({ ...config, branch: 'main' })
-  }
-
   return 'main'
 }
 
@@ -3155,66 +3093,14 @@ async function checkUpdates() {
   branch = await resolveHealedBranch(updateRoot, branch)
   const originUrl = await getOriginUrl(updateRoot)
 
-  if (isOfficialSshRemote(originUrl)) {
-    const git = args => runGit(args, { cwd: updateRoot }).then(r => r.stdout.trim())
-
-    const [currentSha, target, dirtyStr, currentBranch] = await Promise.all([
-      git(['rev-parse', 'HEAD']),
-      runGit(['ls-remote', OFFICIAL_REPO_HTTPS_URL, `refs/heads/${branch}`], { cwd: updateRoot }),
-      git(['status', '--porcelain']),
-      git(['rev-parse', '--abbrev-ref', 'HEAD'])
-    ])
-
-    const targetSha = firstLine(target.stdout).split(/\s+/)[0] || ''
-
-    if (target.code !== 0 || !targetSha) {
-      return {
-        supported: true,
-        branch,
-        error: 'fetch-failed',
-        message: firstLine(target.stderr) || 'git ls-remote failed.',
-        hermesRoot: updateRoot,
-        fetchedAt: Date.now()
-      }
-    }
-
-    // Passive SSH-official checks only know tip SHAs (ls-remote) — never
-    // fabricate a "1 commit behind". Recover the exact count via the GitHub
-    // compare API when possible; otherwise behind stays null ("update
-    // available, count unknown") and updateAvailable carries the signal.
-    // ahead_by === 0 with differing tips means the remote tip is reachable
-    // from our HEAD — a local carried commit sitting AHEAD, not behind:
-    // flagging that as an update nudges the user into wiping their work.
-    const tipsEqual = Boolean(currentSha && currentSha === targetSha)
-
-    const sshBehind = tipsEqual
-      ? 0
-      : await fetchCompareBehindCount({ currentSha, originUrl: OFFICIAL_REPO_HTTPS_URL, targetSha })
-
-    const upToDate = tipsEqual || sshBehind === 0
-
-    return {
-      supported: true,
-      branch,
-      currentBranch,
-      behind: upToDate ? 0 : sshBehind,
-      updateAvailable: !upToDate,
-      currentSha,
-      targetSha,
-      commits: [],
-      dirty: dirtyStr.length > 0,
-      hermesRoot: updateRoot,
-      fetchedAt: Date.now()
-    }
-  }
-
   // Self-heal abandoned git lock files before fetching. A stale
   // .git/shallow.lock from a crashed/interrupted fetch otherwise fails every
   // later fetch ("Unable to create '.git/shallow.lock': File exists") and this
   // check reports 'fetch-failed' forever — git never removes these itself.
   await clearStaleGitLocks(updateRoot)
 
-  const fetched = await runGit(['fetch', '--quiet', 'origin', branch], { cwd: updateRoot })
+  const shallow = await runGit(['rev-parse', '--is-shallow-repository'], { cwd: updateRoot })
+  const fetched = await runGit(['fetch', '--quiet', '--no-tags', ...(shallow.stdout.trim() === 'true' ? ['--unshallow'] : []), OFFICIAL_REPO_HTTPS_URL, '+refs/heads/main:refs/remotes/origin/main'], { cwd: updateRoot })
 
   if (fetched.code !== 0) {
     return {
@@ -3238,38 +3124,14 @@ async function checkUpdates() {
   ])
 
   const isShallow = shallowStr === 'true'
-
-  // A shallow graph cannot provide a trustworthy exact count, even when it has
-  // a visible merge-base. Skip the ancestry walk and use the SHA fallback.
-  const countStr = shouldCountCommits({ isShallow }) ? await git(['rev-list', `HEAD..origin/${branch}`, '--count']) : ''
-
-  // A positive directional ancestry result remains trustworthy in a shallow
-  // graph and prevents a local commit on top of origin from looking outdated.
-  const targetIsAncestorOfHead =
-    isShallow &&
-    currentSha !== targetSha &&
-    (await runGit(['merge-base', '--is-ancestor', `origin/${branch}`, 'HEAD'], { cwd: updateRoot })).code === 0
-
-  let behind = resolveBehindCount({
-    countStr,
-    currentSha,
-    targetSha,
-    isShallow,
-    targetIsAncestorOfHead
-  })
-
-  // Recover the exact count a shallow clone can't compute: the GitHub compare
-  // API knows the full graph regardless of local clone depth. Best-effort —
-  // offline, rate-limited, or non-GitHub origins keep the honest null
-  // ("update available", no fabricated number).
-  if (behind === null) {
-    behind = await fetchCompareBehindCount({ currentSha, originUrl, targetSha })
+  const targetAncestor = await runGit(['merge-base', '--is-ancestor', `origin/${branch}`, 'HEAD'], { cwd: updateRoot })
+  const headAncestor = await runGit(['merge-base', '--is-ancestor', 'HEAD', `origin/${branch}`], { cwd: updateRoot })
+  if (isShallow || ![0, 1].includes(targetAncestor.code) || ![0, 1].includes(headAncestor.code) ||
+      (currentSha !== targetSha && targetAncestor.code !== 0 && headAncestor.code !== 0)) {
+    return { supported: true, branch, error: 'ancestry-unavailable-or-diverged', hermesRoot: updateRoot, fetchedAt: Date.now() }
   }
+  const behind = targetAncestor.code === 0 ? 0 : Number(await git(['rev-list', `HEAD..origin/${branch}`, '--count']))
 
-  // behind === null means "update available, exact count unknown" (shallow
-  // clone): still list what origin offers — resolveCommitLogSelection keeps
-  // the shallow log to the fetched tip so the range walk can't enumerate the
-  // contaminated ancestry — so "See what's new" stays useful and honest.
   const commits = behind !== 0 ? await readCommitLog(updateRoot, branch, isShallow) : []
 
   return {
@@ -12893,7 +12755,7 @@ async function startHermes() {
   // E2E: simulate a boot failure without breaking the real backend. The boot
   // progresses a few steps, then fails with the given error message.
   if (BOOT_FAKE_ERROR) {
-    await advanceBootProgress('backend.resolve', 'Resolving Hermes backend', 8)
+    await advanceBootProgress('backend.resolve', 'Resolving Eidolon backend', 8)
     const error = new Error(BOOT_FAKE_ERROR) as any
     error.isBootstrapFailure = true
     bootstrapFailure = error
@@ -12956,7 +12818,7 @@ async function startHermes() {
       return createPrimaryRemoteConnection(remote, hermesLog.slice(-80), getWindowState())
     }
 
-    await advanceBootProgress('backend.resolve', 'Resolving Hermes backend', 8)
+    await advanceBootProgress('backend.resolve', 'Resolving Eidolon backend', 8)
     // Resolve for the desktop's primary profile so a per-profile remote
     // override on the active profile is honored (falls back to env / global).
 
@@ -13437,7 +13299,7 @@ function spawnSecondaryWindow({
     height: SESSION_WINDOW_MIN_HEIGHT,
     minWidth: SESSION_WINDOW_MIN_WIDTH,
     minHeight: SESSION_WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: 'Eidolon',
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -13531,7 +13393,7 @@ function spawnBrowserWindow(tabId) {
     height: BROWSER_WINDOW_HEIGHT,
     minWidth: BROWSER_WINDOW_MIN_WIDTH,
     minHeight: BROWSER_WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: 'Eidolon',
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -13623,7 +13485,7 @@ function createInstanceWindow() {
     ...nextInstanceBounds(),
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: 'Eidolon',
     titleBarStyle: 'hidden',
     titleBarOverlay: getTitleBarOverlayOptions(),
     trafficLightPosition: IS_MAC ? WINDOW_BUTTON_POSITION : undefined,
@@ -14573,7 +14435,7 @@ function createWindow() {
     ...computeWindowOptions(savedWindowState, screen.getAllDisplays()),
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
-    title: 'Hermes',
+    title: 'Eidolon',
     // Frameless title bar on every platform so the renderer can paint the
     // "hide sidebar" button (and other left-side titlebar tools) flush with
     // the top edge — matching the macOS layout where the traffic lights sit
@@ -14598,6 +14460,9 @@ function createWindow() {
   })
 
   const createdMainWindow = mainWindow
+  createdMainWindow.on('page-title-updated', event => {
+    event.preventDefault()
+  })
 
   // Chat-surface registration: see applyWindowTranslucency.
   translucencyBackedWindows.add(mainWindow)
@@ -17601,23 +17466,7 @@ ipcMain.handle('hermes:updates:branch:set', async (_event, name) => {
 // which historically drifted (stuck at 0.0.2). Falls back to app.getVersion()
 // when the source tree can't be read (e.g. a packaged build without the repo).
 function resolveHermesVersion() {
-  try {
-    const root = resolveUpdateRoot()
-    const initPath = path.join(root, 'hermes_cli', '__init__.py')
-
-    if (fileExists(initPath)) {
-      const raw = fs.readFileSync(initPath, 'utf8')
-      const match = raw.match(/__version__\s*=\s*["']([^"']+)["']/)
-
-      if (match) {
-        return match[1]
-      }
-    }
-  } catch {
-    // Fall through to the Electron app version below.
-  }
-
-  return app.getVersion()
+  return formatInstallVersion(INSTALL_STAMP)
 }
 
 // Renderer-bundle skew: `hermes update` moves the SOURCE TREE, but the UI

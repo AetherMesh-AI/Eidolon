@@ -1,7 +1,63 @@
 """Serve-process lifecycle: parent death watchdog, port-conflict preflight, READY announcement, browser open, trusted proxies.
 """
 
+from dataclasses import asdict, dataclass, replace
 import logging
+
+from hermes_cli.action_registry import ActionDrainResult
+
+
+@dataclass(frozen=True)
+class BackendShutdownResult:
+    """Diagnostic evidence, never update authorization or process-tree closure."""
+
+    status: str
+    reasons: tuple[str, ...]
+    actions: ActionDrainResult | None = None
+    evidence_scope: str = "registered-direct-actions-and-backend-finalizers"
+    kind: str = "ordinary"
+
+
+def retain_backend_shutdown(app, result: BackendShutdownResult) -> BackendShutdownResult:
+    """Retain even when disk fails; atomic private per-process diagnostic receipt.
+
+    Nothing reads this file as authority. In particular a registry ShutdownIntent
+    is not a request from the live channel driver and cannot label this an update.
+    """
+    from hermes_cli.config import get_hermes_home
+
+    app.state.shutdown_result = result
+    temporary = None
+    fd = None
+    try:
+        destination = get_hermes_home() / f"dashboard-shutdown-{os.getpid()}.json"
+        fd, temporary = tempfile.mkstemp(prefix=".dashboard-shutdown-", dir=destination.parent)
+        stream = os.fdopen(fd, "w", encoding="utf-8")
+        fd = None  # Successful wrapping transfers ownership to the stream.
+        with stream:
+            json.dump({"schema": 1, "pid": os.getpid(), **asdict(result)}, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+    except Exception:
+        result = replace(result, status="incomplete", reasons=result.reasons + ("shutdown-receipt-error",))
+        app.state.shutdown_result = result
+        # Fixed reason codes only: exceptions can contain credentials/commands.
+        _log.error("Backend shutdown receipt could not be persisted")
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+    return result
+
 import ipaddress
 import json
 import os

@@ -121,6 +121,44 @@ class LedgerEntry:
     host: str = ""
     port: Optional[int] = None
     profile: str = ""
+    home: str = ""
+
+
+def owned_process_start_time(pid: int, purpose: str) -> Optional[float]:
+    """Strict reaper identity: this install, exact home, and live ledger incarnation.
+
+    Discovery by argv/profile is not ownership. Unlike the inventory's permissive
+    legacy matching, destructive cleanup requires an exact, known start time.
+    Old ledgers may prove home through the live environment; inaccessible or
+    absent identity fails closed. Read afresh immediately before each signal.
+    """
+    try:
+        import math
+        import psutil
+        from hermes_cli.config import get_hermes_home
+
+        home = Path(get_hermes_home()).resolve()
+        entries = _read_ledger(_ledger_path())
+        for entry in entries or []:
+            if (entry.get("pid") != pid or entry.get("install") != install_id()
+                    or entry.get("purpose") != purpose):
+                continue
+            recorded = entry.get("create_time")
+            if not isinstance(recorded, (int, float)) or isinstance(recorded, bool):
+                continue
+            if not math.isfinite(recorded) or recorded <= 0:
+                continue
+            proc = psutil.Process(pid)
+            if proc.create_time() != recorded:
+                continue
+            target_home = entry.get("home") or proc.environ().get("HERMES_HOME")
+            if not isinstance(target_home, str) or not Path(target_home).is_absolute():
+                continue
+            if Path(target_home).resolve() == home:
+                return recorded
+    except Exception:
+        pass
+    return None
 
 
 def _ledger_path() -> Path:
@@ -198,6 +236,12 @@ def register_self(purpose: str, *, project_root: Optional[Path] = None, detail: 
     tag = parse_spawn_tag(os.environ.get(SPAWN_ENV_VAR))
     spawner_pid, spawner_create = (tag.spawner_pid, tag.spawner_create) if tag else _desktop_spawner_identity()
     entry = _new_entry(os.getpid(), _process_create_time(), purpose, project_root, spawner_pid, spawner_create)
+    try:
+        from hermes_cli.config import get_hermes_home
+
+        entry.home = str(Path(get_hermes_home()).resolve())
+    except Exception:
+        pass  # Unknown home remains ineligible for destructive orphan cleanup.
     if detail:
         try:
             entry.host = str(detail.get("host") or "")

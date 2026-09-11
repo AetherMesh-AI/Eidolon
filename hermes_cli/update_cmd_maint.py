@@ -328,13 +328,21 @@ def _finish_dashboard_update_cleanup(
     stop_result = _m()._kill_stale_dashboard_processes(
         restart_managed=True, already_restarted_units=already_restarted_units
     )
-    if not stop_result.get("unrecovered"):
-        return
+    incomplete = any(stop_result.get(key) for key in ("failed", "unresolved", "unrecovered"))
+    if "handoff" in stop_result:
+        # A negotiated result must affirm completion. Missing, malformed or
+        # intermediate status is not permission to print an update receipt.
+        # Legacy standalone cleanup has no handoff key and keeps its policy.
+        handoff = stop_result["handoff"]
+        incomplete = incomplete or not (
+            isinstance(handoff, dict) and handoff.get("status") == "complete"
+        )
+    if incomplete:
+        # Both fleet and zip callers must fail before finalizing success. A
+        # warning followed by normal return loses the recovery obligation.
+        from hermes_cli.update_cleanup_error import DashboardCleanupIncomplete
 
-    print()
-    print("⚠ A web dashboard/serve process was stopped during update and could not be auto-restarted.")
-    print("  Re-launch it when you want the web UI back:")
-    print("    hermes dashboard --port <port>")
+        raise DashboardCleanupIncomplete(stop_result)
 
 
 def _print_update_completion(message: str) -> None:

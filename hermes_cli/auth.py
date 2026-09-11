@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 
 from hermes_cli.config import (
     get_hermes_home, get_config_path, read_raw_config, require_readable_config_before_write)
-from hermes_constants import OPENROUTER_BASE_URL, secure_parent_dir
+from hermes_constants import OPENROUTER_BASE_URL, display_hermes_home, secure_parent_dir
 from agent.credential_persistence import sanitize_borrowed_credential_payload
 from utils import atomic_replace, atomic_yaml_write, env_float, is_truthy_value  # noqa: F401  (env_float: agent.credential_pool reads auth_mod.env_float)
 from hermes_cli.auth_zai_kimi import (  # noqa: F401  re-exported
@@ -1463,7 +1463,7 @@ def resolve_provider(
     raise AuthError(
         "No inference provider configured. Run 'hermes model' to choose a "
         "provider and model, or set an API key (OPENROUTER_API_KEY, "
-        "OPENAI_API_KEY, etc.) in ~/.hermes/.env.",
+        f"OPENAI_API_KEY, etc.) in {display_hermes_home()}/.env.",
         code="no_provider_configured")
 
 

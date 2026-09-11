@@ -3,7 +3,8 @@
 import os
 import sys
 
-__version__ = "0.21.1"
+__version__ = "0.1.0"
+__channel__ = "alpha"
 __release_date__ = "2026.9.7"
 
 

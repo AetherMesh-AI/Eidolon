@@ -5,7 +5,7 @@
 # Uses uv for fast Python provisioning and package management.
 #
 # Usage:
-#   iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+#   iex (irm https://raw.githubusercontent.com/AetherMesh-AI/Eidolon/main/scripts/install.ps1)
 #
 # Or download and run with options:
 #   .\install.ps1 -NoVenv -SkipSetup
@@ -30,8 +30,8 @@ param(
     # existing tree pass -ForceCommit.
     [switch]$ForceCommit,
     [string]$Tag = "",
-    [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" }),
-    [string]$InstallDir = $(if ($env:HERMES_HOME) { "$env:HERMES_HOME\hermes-agent" } else { "$env:LOCALAPPDATA\hermes\hermes-agent" }),
+    [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$HOME\.eidolon" }),
+    [string]$InstallDir = $(if ($env:HERMES_HOME) { "$env:HERMES_HOME\hermes-agent" } else { "$HOME\.eidolon\hermes-agent" }),
 
     # --- Stage protocol (additive; default invocation behaves as before) ----
     # See the "Stage protocol" section near the bottom of the file for the
@@ -345,14 +345,14 @@ if ($PSBoundParameters.ContainsKey('HermesHome')) {
     $HermesHome = ConvertTo-LongPath $HermesHome
 } else {
     $HermesHome = ConvertTo-LongPath $(
-        if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" }
+        if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$HOME\.eidolon" }
     )
 }
 if ($PSBoundParameters.ContainsKey('InstallDir')) {
     $InstallDir = ConvertTo-LongPath $InstallDir
 } else {
     $InstallDir = ConvertTo-LongPath $(
-        if ($env:HERMES_HOME) { "$env:HERMES_HOME\hermes-agent" } else { "$env:LOCALAPPDATA\hermes\hermes-agent" }
+        if ($env:HERMES_HOME) { "$env:HERMES_HOME\hermes-agent" } else { "$HOME\.eidolon\hermes-agent" }
     )
 }
 if ($script:NormalizedProfilePaths) {
@@ -383,8 +383,8 @@ $script:ResolvedPathReport = @{
 # Configuration
 # ============================================================================
 
-$RepoUrlSsh = "git@github.com:NousResearch/hermes-agent.git"
-$RepoUrlHttps = "https://github.com/NousResearch/hermes-agent.git"
+$RepoUrlSsh = "git@github.com:AetherMesh-AI/Eidolon.git"
+$RepoUrlHttps = "https://github.com/AetherMesh-AI/Eidolon.git"
 $PythonVersion = "3.11"
 # Minor versions the installer accepts when the requested $PythonVersion isn't
 # available, in preference order. Only checkout-private uv-managed interpreters
@@ -578,7 +578,8 @@ function Write-NpmDebugLogTail {
     )
     $logPath = $null
     # Preferred: npm names the exact file in its failure summary.
-    if ($NpmOutput -and $NpmOutput -match "A complete log of this run can be found in:\s*(?<path>[^\r\n]+)") {
+    if ($NpmOutput -and $NpmOutput -match "A complete log of this run can be found in:\s*(?<path>[^
+\n]+)") {
         $candidate = $Matches['path'].Trim()
         if (Test-Path -LiteralPath $candidate) { $logPath = $candidate }
     }
@@ -2417,13 +2418,13 @@ function Install-Repository {
                 # for.  GitHub supports archive URLs for commits, tags, and
                 # branches; we honour Commit > Tag > Branch.
                 if ($Commit) {
-                    $zipUrl = "https://github.com/NousResearch/hermes-agent/archive/$Commit.zip"
+                    $zipUrl = "https://github.com/AetherMesh-AI/Eidolon/archive/$Commit.zip"
                     $zipLabel = $Commit
                 } elseif ($Tag) {
-                    $zipUrl = "https://github.com/NousResearch/hermes-agent/archive/refs/tags/$Tag.zip"
+                    $zipUrl = "https://github.com/AetherMesh-AI/Eidolon/archive/refs/tags/$Tag.zip"
                     $zipLabel = $Tag
                 } else {
-                    $zipUrl = "https://github.com/NousResearch/hermes-agent/archive/refs/heads/$Branch.zip"
+                    $zipUrl = "https://github.com/AetherMesh-AI/Eidolon/archive/refs/heads/$Branch.zip"
                     $zipLabel = $Branch
                 }
                 $zipPath = "$env:TEMP\hermes-agent-$zipLabel.zip"
@@ -3245,7 +3246,7 @@ function Set-PathVariable {
     
     # Set HERMES_HOME so the Python code finds config/data in the right place.
     # Only needed on Windows where we install to %LOCALAPPDATA%\hermes instead
-    # of the Unix default ~/.hermes
+    # of the Unix default ~/.eidolon
     $currentHermesHome = [Environment]::GetEnvironmentVariable("HERMES_HOME", "User")
     if (-not $currentHermesHome -or $currentHermesHome -ne $HermesHome) {
         [Environment]::SetEnvironmentVariable("HERMES_HOME", $HermesHome, "User")
@@ -4272,8 +4273,10 @@ function Install-Desktop {
     # 3. Sanity-check the produced binary. Probe both arches so this works
     # on x64 and arm64 build machines.
     $exeCandidates = @(
-        "$desktopDir\release\win-unpacked\Hermes.exe",
-        "$desktopDir\release\win-arm64-unpacked\Hermes.exe"
+        "$desktopDir
+elease\win-unpacked\Hermes.exe",
+        "$desktopDir
+elease\win-arm64-unpacked\Hermes.exe"
     )
     $found = $false
     $desktopExe = $null
@@ -4286,7 +4289,8 @@ function Install-Desktop {
         }
     }
     if (-not $found) {
-        throw "Desktop build completed but no Hermes.exe was found under $desktopDir\release\*-unpacked\"
+        throw "Desktop build completed but no Hermes.exe was found under $desktopDir
+elease\*-unpacked\"
     }
 
     # 3b. The Hermes icon + identity are stamped onto Hermes.exe by the
@@ -4386,7 +4390,7 @@ function New-DesktopShortcuts {
 
 function Install-PlatformSdks {
     # Ensure messaging-platform SDKs matching tokens the user added to
-    # ~/.hermes/.env are importable.  Two problems this solves:
+    # ~/.eidolon/.env are importable.  Two problems this solves:
     #
     # 1. The tiered `uv pip install` cascade above can fall through to a
     #    lower tier when the first fails (common when RL git deps choke),
@@ -5057,7 +5061,7 @@ try {
     Write-Err "Installation failed: $_"
     Write-Host ""
     Write-Info "If the error is unclear, try downloading and running the script directly:"
-    Write-Host "  Invoke-WebRequest -Uri 'https://hermes-agent.nousresearch.com/install.ps1' -OutFile install.ps1" -ForegroundColor Yellow
+    Write-Host "  Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/AetherMesh-AI/Eidolon/main/scripts/install.ps1' -OutFile install.ps1" -ForegroundColor Yellow
     Write-Host "  .\install.ps1" -ForegroundColor Yellow
     Write-Host ""
 }

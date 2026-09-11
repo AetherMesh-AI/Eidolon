@@ -56,6 +56,9 @@ def _skin_color(key: str, fallback: str) -> str:
 # === ASCII Art & Branding ===
 
 from hermes_cli import __version__ as VERSION, __release_date__ as RELEASE_DATE
+from hermes_cli.eidolon_update_policy import build_identity
+_identity = build_identity()
+VERSION = f"{VERSION} alpha · {_identity['commit'] or 'unknown commit'}" + (" (dirty source)" if _identity['dirty'] else "")
 
 HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
 [bold #FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
@@ -131,8 +134,8 @@ _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600  # avoid repeated git fetches
 # Returned when an update is known to exist but commits can't be counted (e.g. nix builds).
 UPDATE_AVAILABLE_NO_COUNT = -1
 
-_UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
-_OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
+_UPSTREAM_REPO_URL = "https://github.com/AetherMesh-AI/Eidolon.git"
+_OFFICIAL_REPO_CANONICAL = "github.com/aethermesh-ai/eidolon"
 
 
 def _canonical_github_remote(url: str | None) -> str:
@@ -219,7 +222,7 @@ def _github_compare_behind(current_rev: str, target_rev: str) -> Optional[int]:
     """
     if not (_is_full_sha(current_rev) and _is_full_sha(target_rev)):
         return None
-    url = f"https://api.github.com/repos/nousresearch/hermes-agent/compare/{current_rev}...{target_rev}"
+    url = f"https://api.github.com/repos/AetherMesh-AI/Eidolon/compare/{current_rev}...{target_rev}"
 
     def _fetch():
         import urllib.request
@@ -417,13 +420,13 @@ def _compute_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]
     return {"upstream": upstream, "local": local, "ahead": max(ahead, 0)}
 
 
-_RELEASE_URL_BASE = "https://github.com/NousResearch/hermes-agent/releases/tag"
+_RELEASE_URL_BASE = "https://github.com/AetherMesh-AI/Eidolon/releases/tag"
 
 
 def get_latest_release_tag(repo_dir: Optional[Path] = None) -> Optional[tuple]:
     """Return ``(tag, release_url)`` for the latest local git tag, or None (a miss is cached too).
 
-    Release URL always points at the canonical NousResearch/hermes-agent repo (forks get no link).
+    Release URL always points at the canonical AetherMesh-AI/Eidolon repo (forks get no link).
     """
     def _compute():
         rd = repo_dir or _resolve_repo_dir()

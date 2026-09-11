@@ -43,12 +43,8 @@ def get_hermes_home_override() -> str | None:
 
 
 def _get_platform_default_hermes_home() -> Path:
-    """Return the platform-native default Hermes home path."""
-    if sys.platform == "win32":
-        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
-        return base / "hermes"
-    return Path.home() / ".hermes"
+    """Eidolon default, independent of any pre-existing Hermes installation."""
+    return Path.home() / ".eidolon"
 
 
 def _warn_profile_fallback_once() -> None:

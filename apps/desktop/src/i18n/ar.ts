@@ -2239,7 +2239,7 @@ export const ar = defineLocale({
     installTo: 'سيتم التثبيت في',
     retryAfterRun: 'لقد شغّلته -- إعادة المحاولة',
     failedTitle: 'فشل التثبيت',
-    settingUpTitle: 'جار إعداد وكيل Hermes',
+    settingUpTitle: 'جار إعداد Eidolon',
     finishingTitle: 'جار الإنهاء',
     failedDesc:
       'فشلت إحدى خطوات التثبيت. على Windows، قد يحدث هذا إذا كان هناك نسخة أخرى من Hermes CLI أو تطبيق سطح المكتب قيد التشغيل. أوقف أي نسخ Hermes قيد التشغيل، ثم أعد المحاولة. تحقق من التفاصيل أدناه أو من سجل سطح المكتب للحصول على النص الكامل.',
@@ -2261,10 +2261,10 @@ export const ar = defineLocale({
     reloadRetry: 'إعادة التحميل وإعادة المحاولة'
   },
   onboarding: {
-    headerTitle: 'لنُعِدّ لك Hermes Agent',
+    headerTitle: 'لنُعِدّ لك Eidolon',
     headerDesc: 'اربط مزوّد نماذج لبدء المحادثة. معظم الخيارات تتطلب نقرة واحدة.',
-    preparingInstall: 'يُكمل Hermes التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',
-    starting: 'جار بدء Hermes...',
+    preparingInstall: 'يُكمل Eidolon التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',
+    starting: 'جار بدء Eidolon...',
     lookingUpProviders: 'جار البحث عن المزوّدين...',
     collapse: 'طي',
     otherProviders: 'مزودون آخرون',

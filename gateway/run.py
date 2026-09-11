@@ -5174,6 +5174,14 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Set here (not at import) so incidental gateway.run imports from CLI code don't poison it.
     os.environ["HERMES_EXEC_ASK"] = "1"
 
+    # Shared by the CLI and module entry points; both must record ownership
+    # before startup can leave behind an orphan process.
+    def _register_identity() -> None:
+        from hermes_cli.process_identity import attach_self_to_kill_on_close_job, register_self
+        register_self("gateway")
+        attach_self_to_kill_on_close_job()
+    _best_effort(_register_identity)
+
     from hermes_cli.resource_limits import apply_nofile_soft_limit
     apply_nofile_soft_limit()
 
@@ -5348,12 +5356,6 @@ def main():
     os.environ.setdefault("AI_AGENT", "hermes-agent")
     os.environ.setdefault("HERMES_AGENT", "true")
 
-    def _register_identity() -> None:
-        # Ledger registration + Windows job-object attach so update-time reapers can identify this gateway.
-        from hermes_cli.process_identity import attach_self_to_kill_on_close_job, register_self
-        register_self("gateway")
-        attach_self_to_kill_on_close_job()
-
     def _arm_watchdog() -> None:
         # Armed before config load / DB opens so a pre-loop deadlock is respawned by the supervisor instead
         # of wedging as a live-PID zombie. GatewayRunner disarms it.
@@ -5365,7 +5367,7 @@ def main():
         from hermes_cli.stdio import configure_windows_stdio
         configure_windows_stdio()
 
-    for _step in (_register_identity, _arm_watchdog, _utf8_stdio):
+    for _step in (_arm_watchdog, _utf8_stdio):
         _best_effort(_step)
 
     import argparse

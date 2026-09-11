@@ -53,28 +53,24 @@ function tryExec(cmd, opts) {
 
 export function fromCI(env = process.env) {
   const sha = env.GITHUB_SHA
-  if (!sha) return null
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha) || /^0+$/.test(sha)) return null
   const branch = env.GITHUB_REF_NAME || env.GITHUB_HEAD_REF || null
   return {
     commit: sha,
     branch: branch,
-    dirty: false, // CI builds from a checkout-of-ref by definition
+    dirty: null, // CI metadata alone cannot prove the workspace is clean.
     source: "ci"
   }
 }
 
 export function fromLocalGit(repoRoot = REPO_ROOT, execFn = tryExec) {
   const sha = execFn("git rev-parse HEAD", { cwd: repoRoot })
-  if (!sha) return null
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha) || /^0+$/.test(sha)) return null
   const branch = execFn("git rev-parse --abbrev-ref HEAD", { cwd: repoRoot })
-  // `git status --porcelain -uno` is empty iff tracked files match HEAD.
-  // We exclude untracked files (-uno) intentionally: a developer who's
-  // checked out an installer scratch dir alongside the repo shouldn't
-  // poison every local build with a [DIRTY] stamp.  We DO care about
-  // tracked-but-modified files because those mean the .exe content
-  // differs from the commit being pinned.
-  const status = execFn("git status --porcelain -uno", { cwd: repoRoot })
-  const dirty = status !== null && status.length > 0
+  // Untracked source can be bundled too. Git's ignored build/cache outputs
+  // stay excluded, but a failed status command must never imply clean.
+  const status = execFn("git status --porcelain --untracked-files=all", { cwd: repoRoot })
+  const dirty = status === null ? null : status.length > 0
   return {
     commit: sha,
     branch: branch === "HEAD" ? null : branch, // detached HEAD -> null
@@ -92,7 +88,7 @@ export function fromFallback(branch = FALLBACK_BRANCH) {
   return {
     commit: FALLBACK_COMMIT,
     branch: branch || FALLBACK_BRANCH,
-    dirty: false,
+    dirty: null,
     source: "fallback"
   }
 }
@@ -107,7 +103,7 @@ export function resolveStamp({
   execFn = tryExec,
   fallbackBranch = FALLBACK_BRANCH
 } = {}) {
-  return fromCI(env) || fromLocalGit(repoRoot, execFn) || fromFallback(fallbackBranch)
+  return fromLocalGit(repoRoot, execFn) || fromCI(env) || fromFallback(fallbackBranch)
 }
 
 export function isFallbackCommit(commit) {
@@ -151,6 +147,10 @@ function main() {
 
   const payload = {
     schemaVersion: STAMP_SCHEMA_VERSION,
+    version: "0.1.0",
+    channel: "alpha",
+    repository: "AetherMesh-AI/Eidolon",
+    updateBranch: "main",
     commit: stamp.commit,
     branch: stamp.branch,
     builtAt: new Date().toISOString(),
@@ -166,7 +166,7 @@ function main() {
       " -> " +
       stamp.commit.slice(0, 12) +
       (stamp.branch ? " (" + stamp.branch + ")" : "") +
-      (stamp.dirty ? " [DIRTY]" : "") +
+      (stamp.dirty === true ? " [DIRTY]" : stamp.dirty === false ? "" : " [DIRTY UNKNOWN]") +
       (stamp.source === "fallback" ? " [FALLBACK]" : "")
   )
 }

@@ -418,6 +418,9 @@ def _update_via_zip(args, *, had_desktop_app_before_update: bool = False) -> boo
     with _best_effort('Post-update state.db integrity check (zip path) failed: %s'):
         # See #97994.
         _verify_and_restore_state_dbs_post_update()
+    # Cleanup failures must propagate before any completion sentinel or success
+    # receipt. Node-refresh failure still leaves the running backend untouched.
+    _finish_dashboard_update_cleanup(node_failures)
     update_complete = _print_update_summary(
         node_failures=node_failures, desktop_build_ok=desktop_build_ok, pre_update_version=pre_update_version,
     )
@@ -425,9 +428,6 @@ def _update_via_zip(args, *, had_desktop_app_before_update: bool = False) -> boo
         _print_curator_first_run_notice()
     with _best_effort('Curator recent-run notice failed: %s'):
         _print_curator_recent_run_notice()
-    # Don't stop a working dashboard when the Node refresh failed — see the git-update path for rationale.
-    # See #30271.
-    _finish_dashboard_update_cleanup(node_failures)
     with _best_effort('Update receipt finalize (zip path) failed: %s'):
         from hermes_cli.update_receipt import finalize_update_receipt
         finalize_update_receipt("success" if update_complete and not node_failures else "partial")

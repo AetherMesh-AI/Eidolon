@@ -2269,11 +2269,11 @@ def cmd_update(args):
         # Receipt boundary: the impl has many early sys.exit paths that never
         # reach an inner finalize. Persist any still-open receipt with the real
         # exit code (no-op if already finalized), then let the exit proceed.
-        _code = _update_exit.code if isinstance(_update_exit.code, int) else 1
-        _finalize_update_receipt(_code, f"sys.exit({_code})")
-        _update_handoff_exit_code = (
-            _update_exit.code if isinstance(_update_exit.code, int) else 0
+        _code = 0 if _update_exit.code is None else (
+            _update_exit.code if isinstance(_update_exit.code, int) else 1
         )
+        _finalize_update_receipt(_code, f"sys.exit({_code})")
+        _update_handoff_exit_code = _code
         raise
     except BaseException as _update_exc:
         _finalize_update_receipt(1, f"{type(_update_exc).__name__}: {_update_exc}")
@@ -2357,12 +2357,21 @@ def _dashboard_lifecycle_flags(args, token_file) -> None:
         if not _find_stale_dashboard_pids():
             print("No hermes dashboard processes running.")
             sys.exit(0)
-        # Reuse the same SIGTERM-grace-SIGKILL path used after `hermes update`;
-        # it prints outcomes itself. Exit 1 only if every pid was unkillable.
+        # Reuse the update stop path, preserving any explicit incomplete result
+        # as well as roots still visible to the final discovery.
         from hermes_cli.dashboard_procs import _kill_stale_dashboard_processes
 
-        _kill_stale_dashboard_processes(reason="requested via --stop")
-        sys.exit(1 if _find_stale_dashboard_pids() else 0)
+        result = _kill_stale_dashboard_processes(reason="requested via --stop")
+        # A vanished root is not proof that owned work was drained. Preserve
+        # explicit incomplete outcomes even when the final discovery is empty.
+        # Ordinary --stop intentionally does not restart killed dashboards.
+        # The legacy producer reports those PIDs as unrecovered; only update
+        # cleanup has a restart obligation. Still retain explicit stop failures.
+        incomplete = any(result.get(key) for key in ("failed", "unresolved"))
+        handoff = result.get("handoff") or {}
+        incomplete = incomplete or handoff.get("status") in ("incomplete", "unknown", "failed")
+        remaining = _find_stale_dashboard_pids()
+        sys.exit(1 if incomplete or remaining else 0)
 
 
 def _dashboard_validate_serve_args(args, headless_backend, token_file):

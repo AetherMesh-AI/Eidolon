@@ -20,7 +20,14 @@ export const PROFILES_ROUTE = '/profiles'
 export const AGENTS_ROUTE = '/agents'
 export const STARMAP_ROUTE = '/starmap'
 
+export const ORGANIZATION_PATHS = ['/home', '/objectives', '/activity', '/knowledge', '/organization'] as const
+
+export function isOrganizationRoute(path: string): boolean {
+  return ORGANIZATION_PATHS.some(route => routePathname(path) === route) || routePathname(path).startsWith('/objectives/')
+}
+
 export type AppView =
+  | 'organization'
   | 'session-import'
   | 'agents'
   | 'artifacts'
@@ -160,7 +167,7 @@ export function isNewChatRoute(pathname: string): boolean {
 export function routeSessionId(pathname: string): string | null {
   const path = routePathname(pathname)
 
-  if (!path.startsWith(SESSION_ROUTE_PREFIX) || RESERVED_PATHS.has(path) || isContributedPath(path)) {
+  if (!path.startsWith(SESSION_ROUTE_PREFIX) || RESERVED_PATHS.has(path) || isOrganizationRoute(path) || isContributedPath(path)) {
     return null
   }
 
@@ -192,6 +199,8 @@ export function sessionRoute(sessionId: string): string {
 
 export function appViewForPath(pathname: string): AppView {
   const path = routePathname(pathname)
+
+  if (isOrganizationRoute(path)) return 'organization'
 
   if (isNewChatRoute(path) || routeSessionId(path)) {
     return 'chat'

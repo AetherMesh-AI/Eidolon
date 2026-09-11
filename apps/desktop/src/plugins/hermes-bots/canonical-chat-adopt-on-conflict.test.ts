@@ -141,6 +141,49 @@ describe('a title-uniqueness rejection means someone else won the registry', () 
     expect(events).not.toContain('open:winner-1')
   })
 
+  it.each(['empty', 'error'] as const)('fails closed when conflict recovery is %s, then allows a later retry', async recovery => {
+    let lists = 0
+
+    respondWith(method => {
+      if (method === 'session.list') {
+        lists += 1
+
+        if (lists === 2 && recovery === 'error') {
+          throw new Error('gateway restarting')
+        }
+
+        return lists <= 2
+          ? { sessions: [] }
+          : { sessions: [{ id: 'winner-1', title: 'Bot Chat' }] }
+      }
+
+      if (method === 'session.create') {
+        return { session_id: 'rt-stray', stored_session_id: 'stray-1' }
+      }
+
+      if (method === 'session.title') {
+        // The real gateway returns 4022 for ValueError, including title
+        // collisions. Use its message as well: 4022 alone is not collision-specific.
+        throw { code: 4022, message: "Title 'Bot Chat' is already in use by session winner-1" }
+      }
+
+      return {}
+    })
+
+    const { createCanonicalChat } = await loadModule()
+    const outcome = await createCanonicalChat('ops', { kickoff: true }).then(
+      id => ({ id, error: null }),
+      error => ({ id: null, error })
+    )
+
+    expect(events).not.toContain('open:stray-1')
+    expect(events).not.toContain('prompt.submit')
+    expect(outcome.id).toBeNull()
+    expect(outcome.error?.message).toMatch(/Bot Chat registry/)
+    expect(await createCanonicalChat('ops')).toBe('winner-1')
+    expect(events.filter(event => event === 'session.create')).toHaveLength(1)
+  })
+
   it('keeps the compat path for a NON-conflict title failure (old gateways)', async () => {
     respondWith(method => {
       if (method === 'session.list') {

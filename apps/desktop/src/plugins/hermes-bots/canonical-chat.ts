@@ -390,9 +390,10 @@ export function createCanonicalChat(
         // our registry miss and this write (peer dm minting server-side, a
         // second machine, cross-connection sync). Falling through to the
         // compat path would prompt into OUR stray session and fork the
-        // forever chat. Re-consult the registry and adopt the winner; the
-        // stray lazy session holds zero messages and is simply abandoned
-        // (the gateway prunes it).
+        // forever chat. session.title reports ValueError as RPC 4022, which
+        // is not collision-specific; its "already in use" message identifies
+        // the conflict (and remains compatible with older gateway errors).
+        // Re-consult the registry and adopt the winner or fail closed.
         if (/already in use/i.test(String((error as RpcErrorLike)?.message || ''))) {
           const winner = await findExistingCanonicalChat(owner)
 
@@ -407,6 +408,10 @@ export function createCanonicalChat(
 
             return winner.id
           }
+
+          // A known collision is not lack of eager-title support. An empty
+          // recovery cannot authorize opening or prompting into the losing row.
+          throw new Error('Bot Chat registry winner unavailable after title conflict; retry opening the bot.')
         }
         /* compatibility fallback: prompt.submit will persist the lazy row */
       }

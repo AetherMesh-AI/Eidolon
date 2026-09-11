@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { NEW_CHAT_ROUTE, primaryRouteSelectedSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
+import { appViewForPath, NEW_CHAT_ROUTE, primaryRouteSelectedSessionId, routeSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
+
+it('keeps organization navigation out of canonical session identity', () => {
+  for (const path of ['/home', '/objectives', '/objectives/example', '/activity', '/knowledge', '/organization']) {
+    expect(routeSessionId(path)).toBeNull()
+    expect(appViewForPath(path)).toBe('organization')
+    expect(primaryRouteSelectedSessionId(path, 'canonical-session')).toBe('canonical-session')
+  }
+})
 
 const SESS_A = 'sess-a'
 const SESS_B = 'sess-b'

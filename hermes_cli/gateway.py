@@ -1613,7 +1613,7 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
         if _windows_scheduled_task_supervises(_task_name):
             return False
 
-    from gateway.status import _pid_exists, get_process_start_time, write_planned_stop_marker
+    from gateway.status import _pid_exists, write_planned_stop_marker
     own = _reaper_exclusion_pids(extra_exclude)
     try:
         # On Windows also drop Task Scheduler-owned candidates (the pidfile-less gap).
@@ -1625,38 +1625,38 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
     if not orphans:
         return False
 
-    # Pin each orphan's start time now: the delayed SIGKILL must never hit a recycled PID.
-    # Pin each orphan's identity NOW: the cmdline scan above matched at scan-time only, and the SIGKILL
-    # escalation below fires seconds later. A PID recycled inside that window must never be force-killed
-    # (#89614 class). Fingerprint capture is best-effort — SIGTERM below proceeds regardless (it targets the
-    # process verified by the scan an instant ago), but the delayed SIGKILL requires a still-matching
-    # fingerprint.
-    orphan_identity: dict[int, int] = {}
-    for pid in orphans:
-        start = get_process_start_time(pid)
-        if start is not None:
-            orphan_identity[pid] = start
+    from hermes_cli.process_identity import owned_process_start_time
 
-    reaped = False
+    # A matching argv/profile only discovers candidates. Require positive install,
+    # home and incarnation ownership, then re-read it immediately before each signal.
+    orphan_identity = {pid: owned_process_start_time(pid, "gateway") for pid in orphans}
+    signalled = []
     for pid in orphans:
+        start = orphan_identity[pid]
+        if start is None:
+            continue
+        if pid in _reaper_exclusion_pids(extra_exclude) or _reaper_candidate_is_supervisor_owned(pid):
+            continue
         with contextlib.suppress(Exception):
             write_planned_stop_marker(pid)
         try:
+            if owned_process_start_time(pid, "gateway") != start:
+                continue
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             continue
         except PermissionError:
             print(f"⚠ Permission denied to kill orphaned gateway PID {pid}")
             continue
-        reaped = True
+        signalled.append(pid)
 
-    # Wait, then force-kill survivors so the replacement can bind the port cleanly.
-    # Fail-closed: SIGKILL only a PID that still names the process fingerprinted at scan time.
-    _force_kill_survivors([
-        pid for pid in _await_gateway_exit(orphans, pid_exists=_pid_exists)
-        if pid in orphan_identity and get_process_start_time(pid) == orphan_identity[pid]
-    ])
-    return reaped
+    # Check each survivor immediately before escalation, not as a batch of stale PIDs.
+    for pid in _await_gateway_exit(signalled, pid_exists=_pid_exists):
+        if pid in _reaper_exclusion_pids(extra_exclude) or _reaper_candidate_is_supervisor_owned(pid):
+            continue
+        if owned_process_start_time(pid, "gateway") == orphan_identity[pid]:
+            _force_kill_survivors([pid])
+    return bool(signalled)
 
 
 def _reaper_exclusion_pids(extra_exclude: set | None) -> set[int]:

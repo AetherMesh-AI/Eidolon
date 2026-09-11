@@ -1,0 +1,149 @@
+.eidolon {
+  --eidolon-bg: #09070d;
+  --eidolon-bg-deep: #060509;
+  --eidolon-surface-1: #100d16;
+  --eidolon-surface-2: #15111d;
+  --eidolon-surface-3: #1b1625;
+  --eidolon-surface-hover: #211a2d;
+  --eidolon-border-subtle: #251e30;
+  --eidolon-border: #332741;
+  --eidolon-border-strong: #49355c;
+  --aether-600: #623484;
+  --aether-500: #8051a6;
+  --aether-400: #9f78c2;
+  --aether-300: #bea0d9;
+  --text-primary: #f1edf5;
+  --text-secondary: #b4aabd;
+  --text-muted: #807588;
+  --status-success: #79a68a;
+  --status-warning: #c6a568;
+  --status-danger: #b96f79;
+  --status-info: #7899b5;
+  color: var(--text-primary);
+  background: var(--eidolon-bg);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  color-scheme: dark;
+}
+.eidolon *, .eidolon *::before, .eidolon *::after { box-sizing: border-box; }
+.eidolon :is(button, a, input, textarea, select):focus-visible { outline: 2px solid var(--aether-400); outline-offset: 3px; }
+.eidolon a { color: var(--aether-300); text-decoration: none; }
+.eidolon button, .eidolon input, .eidolon textarea, .eidolon select { font: inherit; color: inherit; }
+.eidolon button { cursor: pointer; }
+.eidolon button:disabled { opacity: .45; cursor: not-allowed; }
+.eidolon h1 { margin: 0; font-size: 26px; font-weight: 550; letter-spacing: -.025em; line-height: 1.3; overflow-wrap: anywhere; }
+.eidolon h2 { font-size: 16px; font-weight: 550; margin: 24px 0 12px; }
+.eidolon p { color: var(--text-secondary); }
+.eidolon small { display: block; color: var(--text-secondary); font-size: 11px; }
+.eid-workspace { height: 100%; min-height: 0; overflow: auto; }
+.eid-page { max-width: 1180px; margin: auto; padding: 40px clamp(20px, 5vw, 64px) 64px; }
+.eid-page-header { display: flex; justify-content: space-between; align-items: start; gap: 24px; margin-bottom: 30px; }
+.eid-eyebrow { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; margin: 0 0 10px; }
+.eid-page .eid-eyebrow { color: var(--aether-300); }
+.eid-prototype { color: var(--text-secondary); white-space: nowrap; font-size: 10px; padding: 3px 8px; border: 1px solid var(--eidolon-border); border-radius: 4px; }
+.eid-command { max-width: 700px; margin: clamp(20px, 8vh, 100px) auto 60px; text-align: center; }
+.eid-mark { font-size: 40px; color: var(--aether-400); margin-bottom: 10px; }
+.eid-command .eid-eyebrow { font-size: 12px; letter-spacing: .3em; }
+.eid-subtitle { margin: 12px 0 30px; }
+.eid-composer { background: var(--eidolon-surface-1); border: 1px solid var(--eidolon-border); border-radius: 12px; text-align: left; overflow: hidden; }
+.eid-composer:focus-within { border-color: var(--aether-500); box-shadow: 0 0 0 1px rgba(128,81,166,.18), 0 0 28px rgba(128,81,166,.08); }
+.eid-composer textarea { display: block; width: 100%; resize: vertical; min-height: 110px; max-height: 280px; padding: 20px; background: transparent; border: none; }
+.eid-composer textarea:focus-visible { outline-offset: -3px; }
+.eid-priority { display: grid; gap: 6px; padding: 0 12px 12px; text-align: left; color: var(--text-secondary); }
+.eid-priority input[type="range"] { width: 100%; margin: 0; accent-color: var(--aether-400); }
+.eid-priority-endpoints { display: flex; justify-content: space-between; font-size: 11px; }
+.eid-composer-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; color: var(--text-secondary); font-size: 11px; }
+.eidolon .eid-primary, .eidolon .eid-button { display: inline-flex; justify-content: center; align-items: center; gap: 12px; border: 1px solid var(--eidolon-border); border-radius: 6px; padding: 7px 12px; font-size: 12px; color: var(--text-primary); background: var(--eidolon-surface-2); white-space: nowrap; }
+.eidolon .eid-primary { background: var(--aether-600); border-color: var(--aether-500); }
+.eidolon .eid-primary:hover { background: var(--aether-500); }
+.eid-inline { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 18px 0; color: var(--text-secondary); font-size: 12px; }
+.eid-command .eid-inline { justify-content: center; }
+.eid-note { font-size: 11px; }
+.eid-toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; margin-bottom: 24px; }
+.eid-filter { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--text-secondary); margin-bottom: 16px; }
+.eid-toolbar .eid-filter { margin-bottom: 0; }
+.eid-filter input, .eid-filter select { background: var(--eidolon-surface-1); border: 1px solid var(--eidolon-border); border-radius: 6px; padding: 8px 12px; }
+.eid-list { padding: 0; list-style: none; }
+.eidolon .eid-row { display: flex; width: 100%; text-align: left; justify-content: space-between; align-items: center; gap: 20px; padding: 17px 12px; border: 0; border-bottom: 1px solid var(--eidolon-border-subtle); background: transparent; color: var(--text-primary); }
+.eid-row:hover { background: var(--eidolon-surface-hover); }
+.eid-row strong { font-weight: 500; }
+.eid-status { font-size: 11px; white-space: nowrap; color: var(--aether-300); }
+.eid-status-paused, .eid-status-waiting, .eid-status-needs_input { color: var(--status-warning); }
+.eid-status-blocked { color: var(--status-danger); }
+.eid-status-completed { color: var(--status-success); }
+.eid-status span { font-size: 8px; margin-right: 5px; }
+.eid-empty { text-align: center; padding: 45px 20px; color: var(--text-secondary); }
+.eid-empty p { max-width: 540px; margin: 12px auto 24px; }
+.eid-empty a + a { margin-left: 16px; }
+.eid-back { display: inline-block; margin-bottom: 24px; font-size: 12px; }
+.eid-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--eidolon-border); margin-top: 30px; overflow-x: auto; }
+.eid-tabs button { background: none; border: none; border-bottom: 2px solid transparent; padding: 12px 0; color: var(--text-secondary); }
+.eid-tabs button[aria-selected=true] { color: var(--aether-300); border-bottom-color: var(--aether-500); }
+.eid-metrics { display: flex; gap: 40px; flex-wrap: wrap; margin: 30px 0; padding: 24px 0; border-block: 1px solid var(--eidolon-border-subtle); }
+.eid-metrics strong { display: block; font-size: 20px; font-weight: 500; margin-top: 8px; }
+.eid-timeline { padding: 0 0 0 18px; border-left: 1px solid var(--eidolon-border); list-style: none; }
+.eid-timeline li { margin: 24px 0; }
+.eid-timeline p { margin: 4px 0; }
+.eid-timeline a { font-size: 11px; }
+.eid-event-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--aether-300); }
+.eid-overview-context { display: grid; gap: 16px; margin: 24px 0; }
+.eid-overview-context .eid-card { border: 1px solid var(--eidolon-border); border-radius: 8px; padding: 20px; background: var(--eidolon-surface-1); overflow-wrap: anywhere; }
+.eid-overview-context ul { padding-left: 22px; list-style: disc; }
+.eid-overview-context li, .eid-overview-context article { margin-top: 12px; }
+.eid-org-map { display: flex; flex-direction: column; align-items: center; margin: 40px 0; color: var(--eidolon-border-strong); }
+.eid-agent { min-width: 240px; padding: 20px; background: var(--eidolon-surface-1); border: 1px solid var(--eidolon-border); border-radius: 8px; text-align: center; color: var(--text-primary); }
+.eid-agent strong { display: block; font-size: 18px; margin-top: 5px; }
+.eid-agent p { font-size: 11px; margin: 6px 0 0; }
+.eid-inspector { border: 1px solid var(--eidolon-border); background: var(--eidolon-surface-2); border-radius: 8px; padding: 20px; margin-top: 20px; }
+.eid-rail { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 14px 10px; border-right: 1px solid var(--eidolon-border-subtle); }
+.eid-brand { font-weight: 600; letter-spacing: .18em; padding: 12px; font-size: 12px; }
+.eid-brand span { font-size: 19px; margin-right: 10px; color: var(--aether-400); }
+.eid-rail nav { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; }
+.eid-rail nav a { display: flex; gap: 12px; align-items: center; padding: 9px 12px; color: var(--text-secondary); border-radius: 6px; }
+.eid-rail nav a:hover { background: var(--eidolon-surface-hover); }
+.eid-rail nav a[aria-current=page] { color: var(--aether-300); background: var(--eidolon-surface-3); box-shadow: inset 2px 0 var(--aether-500); }
+.eid-rail details { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.eid-rail summary { cursor: pointer; padding: 12px; color: var(--text-secondary); font-size: 11px; }
+.eid-session-tree { height: 280px; min-height: 100px; overflow: auto; }
+.eid-rail-footer { font-size: 10px; color: var(--text-secondary); padding: 12px; border-top: 1px solid var(--eidolon-border-subtle); }
+@media (max-width: 700px) { .eid-page { padding: 24px 18px; } .eidolon h1 { font-size: 22px; } .eid-command { margin-top: 24px; } .eid-page-header { flex-direction: column; gap: 12px; } .eid-composer-tools { flex-wrap: wrap; } }
+.eid-demo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 24px; color: var(--text-secondary); font-size: 11px; }
+.eid-demo-bar > span { margin-right: auto; }
+.eid-organization { display: grid; gap: 18px; margin: 24px 0; }
+.eid-organization-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.eid-organization-map { grid-template-columns: repeat(2, minmax(0, 1fr)); background-image: radial-gradient(var(--eidolon-border) 1px, transparent 1px); background-size: 20px 20px; padding: 28px; border: 1px solid var(--eidolon-border); border-radius: 12px; }
+.eid-organization-map > :nth-child(-n+2) { grid-column: 1 / -1; width: min(320px, 100%); justify-self: center; }
+.eid-organization-map > :not(:first-child) { border-top: 2px solid var(--aether-500); }
+.eid-organization .eid-agent { width: auto; text-align: left; display: flex; flex-direction: column; gap: 9px; }
+.eid-organization .eid-agent strong { font-size: 18px; }
+.eid-organization .eid-agent p { margin: 0; font-size: 12px; }
+.eid-organization-list .eid-agent { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.eid-organization-list .eid-agent p { width: 100%; }
+.eid-status-working { color: var(--aether-300); }
+.eid-status-review, .eid-status-reviewing { color: var(--status-info); }
+.eid-status-active, .eid-status-thinking, .eid-status-executing { color: var(--aether-300); }
+.eid-status-offline, .eid-status-queued { color: var(--text-muted); }
+.eid-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 6px; background: var(--eidolon-surface-3); border: 1px solid var(--eidolon-border); color: var(--aether-300); font-size: 10px; font-weight: 600; }
+.eidolon .eid-task-completed { border-left: 2px solid var(--status-success); }
+.eidolon .eid-task-working { border-left: 2px solid var(--aether-400); }
+.eidolon .eid-task-blocked { border-left: 2px solid var(--status-danger); }
+.eidolon .eid-task-review { border-left: 2px solid var(--status-info); }
+.eidolon .eid-task-queued { border-left: 2px solid var(--text-muted); }
+.eid-metadata-fields { min-width: 0; margin: 20px 0; padding: 20px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); border: 1px solid var(--eidolon-border); border-radius: 8px; background: var(--eidolon-surface-1); }
+.eid-metadata-fields legend { padding: 0 8px; color: var(--text-secondary); font-size: 11px; }
+.eid-metadata-fields label { display: flex; flex-direction: column; gap: 6px; margin: 0; color: var(--text-secondary); font-size: 11px; min-width: 0; }
+.eid-metadata-fields :is(input, select) { width: 100%; min-height: 36px; border: 1px solid var(--eidolon-border); border-radius: 6px; background: var(--eidolon-surface-2); color: var(--text-primary); padding: 8px 12px; }
+.eid-metadata-fields .eid-note { grid-column: 1 / -1; margin: 0; }
+.eid-inspector dl { display: grid; grid-template-columns: minmax(100px, 1fr) 2fr; gap: 10px 20px; }
+.eid-inspector dt { color: var(--text-secondary); }
+.eid-inspector dd { margin: 0; overflow-wrap: anywhere; }
+.eid-status-idle { color: var(--text-secondary); }
+.eid-inspector h3 { margin-top: 28px; }
+.eid-plan { display: grid; gap: 12px; }
+.eid-plan article { padding: 18px; border: 1px solid var(--eidolon-border-subtle); border-radius: 10px; background: var(--eidolon-surface-1); }
+.eid-plan h3 { margin: 8px 0; }
+.eid-plan p { margin: 7px 0; color: var(--eidolon-text-secondary); }
+.eid-graph-scroll { overflow: auto; border: 1px solid var(--eidolon-border-subtle); border-radius: 8px; background: var(--eidolon-surface-1); }
+.eidolon .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { .eidolon *, .eidolon *::before, .eidolon *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

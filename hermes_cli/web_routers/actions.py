@@ -34,6 +34,7 @@ detect_install_method = late("detect_install_method", "hermes_cli.config")
 get_hermes_home = late("get_hermes_home", "hermes_cli.config")
 _ACTION_COMMANDS = LateState("_ACTION_COMMANDS", "hermes_cli.web_server_gateway")
 _ACTION_IDS = LateState("_ACTION_IDS", "hermes_cli.web_server_gateway")
+_launch_failure = late("_action_launch_failure", "hermes_cli.web_server_gateway")
 _ACTION_PROCS = LateState("_ACTION_PROCS", "hermes_cli.web_server_gateway")
 _ACTION_RESULTS = LateState("_ACTION_RESULTS", "hermes_cli.web_server_gateway")
 
@@ -64,7 +65,11 @@ _UPDATE_REFUSAL_ERROR_CODES = {
 
 def _finish_action(name: str, exit_code: Optional[int], pid: Optional[int]) -> None:
     """Record a terminal result and drop the live-process registries for ``name``."""
-    _ACTION_RESULTS[name] = {"exit_code": exit_code, "pid": pid}
+    result = {"exit_code": exit_code, "pid": pid}
+    failure = _launch_failure(_ACTION_PROCS.get(name))
+    if failure is not None:
+        result.update(launch_failure=failure, action_id=_ACTION_IDS.get(name))
+    _ACTION_RESULTS[name] = result
     for registry in (_ACTION_PROCS, _ACTION_COMMANDS, _ACTION_IDS):
         registry.pop(name, None)
 
@@ -197,6 +202,15 @@ def _update_refused(error: str, message: str, update_command: str) -> Dict[str, 
     }
 
 
+def _failed_action_response(name, pid, failure, *, process_running=False):
+    response = {"ok": False, "name": name, "pid": pid, "running": False,
+                "process_running": process_running, **failure}
+    action_id = _ACTION_IDS.get(name) or (_ACTION_RESULTS.get(name) or {}).get("action_id")
+    if action_id:
+        response["action_id"] = action_id
+    return response
+
+
 @router.post("/api/hermes/update")
 async def update_hermes():
     """Kick off ``hermes update`` in the background."""
@@ -218,6 +232,9 @@ async def update_hermes():
 
     existing = _ACTION_PROCS.get("hermes-update")
     if existing is not None and existing.poll() is None:
+        failure = _launch_failure(existing)
+        if failure is not None:
+            return _failed_action_response("hermes-update", existing.pid, failure, process_running=True)
         response = {"ok": True, "pid": existing.pid, "name": "hermes-update", "already_running": True}
         action_id = _ACTION_IDS.get("hermes-update")
         if action_id:
@@ -226,7 +243,15 @@ async def update_hermes():
 
     action_id = secrets.token_hex(16)
     with http_failure("Failed to spawn hermes update", 500, "Failed to start update"):
-        proc = _spawn_hermes_action(["update"], "hermes-update", env_overrides={"HERMES_ACTION_ID": action_id})
+        from hermes_cli.update_handoff_driver import CapabilityUnavailable
+        try:
+            proc = _spawn_hermes_action(["update"], "hermes-update", env_overrides={"HERMES_ACTION_ID": action_id}, role="recovery")
+        except CapabilityUnavailable:
+            proc = _ACTION_PROCS["hermes-update"]
+            return _failed_action_response(
+                "hermes-update", proc.pid, _launch_failure(proc),
+                process_running=proc.poll() is None,
+            )
     return {"ok": True, "pid": proc.pid, "name": "hermes-update", "action_id": action_id}
 
 
@@ -348,6 +373,21 @@ async def get_action_status(name: str, lines: int = 200):
     log_dir = _server_path("_ACTION_LOG_DIR")
     requested_lines = min(max(lines, 1), 2000)
     tail = _tail_lines(log_dir / log_file_name, requested_lines)
+
+    proc = _ACTION_PROCS.get(name)
+    result = _ACTION_RESULTS.get(name) or {}
+    failure = _launch_failure(proc) if proc is not None else result.get("launch_failure")
+    if failure is not None:
+        code = proc.poll() if proc is not None else result.get("exit_code")
+        pid = proc.pid if proc is not None else result.get("pid")
+        if proc is not None and code is not None:
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=1)
+            _finish_action(name, code, pid)
+        response = _failed_action_response(
+            name, pid, failure, process_running=proc is not None and code is None)
+        response.update(exit_code=code, lines=tail)
+        return response
 
     durable_update_action_id = None
     update_receipt_summary = None

@@ -39,11 +39,11 @@ describe('theme typography emoji fallback (#40364)', () => {
   })
 })
 
-// The pre-GitHub Nous palette stays available as nous-alt; the default name
-// still means GitHub chrome + brand blue.
-describe('nous-alt is the retired Nous, not the default', () => {
-  it('is registered under its own name and leaves nous as the default', () => {
-    expect(DEFAULT_SKIN_NAME).toBe('nous')
+// Historical palettes remain opt-in; Eidolon supplies the fresh-install identity.
+describe('Eidolon default retains historical themes', () => {
+  it('defaults to deep-violet Eidolon without redefining Nous', () => {
+    expect(DEFAULT_SKIN_NAME).toBe('eidolon')
+    expect(BUILTIN_THEMES.eidolon.darkColors?.background).toBe('#09070d')
     expect(BUILTIN_THEMES['nous-alt']).toBe(nousAltTheme)
     expect(BUILTIN_THEMES.nous).not.toBe(nousAltTheme)
     expect(nousAltTheme.darkColors?.background).toBe('#0D2F86')

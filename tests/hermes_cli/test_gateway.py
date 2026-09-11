@@ -15,6 +15,19 @@ import hermes_cli.gateway as gateway
 _BREAKAWAY_MARKER = "_HERMES_GATEWAY_BREAKAWAY"
 
 
+@pytest.fixture(autouse=True)
+def owned_reaper_fixture_candidates(monkeypatch, request):
+    # Existing supervisor tests isolate supervisor/ancestry exclusions with fake PIDs.
+    # Positive ledger/home/incarnation behavior is tested through production APIs separately.
+    if request.cls and request.cls.__name__ in {
+        'TestReapUnsupervisedGatewayOrphansMacOS',
+        'TestReapUnsupervisedGatewayOrphansWindows',
+        'TestReaperCandidateIsSupervisorOwned',
+        'TestWindowsScheduledTaskSupervisorGuard',
+    }:
+        monkeypatch.setattr('hermes_cli.process_identity.owned_process_start_time', lambda pid, purpose: 1234.0)
+
+
 def _install_fake_gateway_run(monkeypatch, start_gateway):
     module = ModuleType("gateway.run")
     module.start_gateway = start_gateway

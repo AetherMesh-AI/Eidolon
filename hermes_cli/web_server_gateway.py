@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from hermes_cli._subprocess_compat import windows_detach_flags
+from hermes_cli.action_registry import ActionRegistry
 from hermes_cli.config import get_hermes_home
 
 # Same logger the code used before extraction (record parity).
@@ -278,6 +279,21 @@ _ACTION_IDS: Dict[str, str] = {}
 _ACTION_RESULTS: Dict[str, Dict[str, Any]] = {}
 
 
+def _action_launch_failure(proc):
+    return _ACTION_REGISTRY.launch_failure(proc)
+
+
+def _stop_action_processes(*, timeout: float = 5.0):
+    """Fence and drain all registered direct actions, independent of backend kind.
+
+    Returns evidence, not a best-effort success flag. Recovery remains protected
+    unless the exact live handoff has durably acknowledged and authorized stop.
+    Lifecycle callers must retain/consume this result; calling the legacy
+    desktop-only cleanup below is not equivalent to using this adapter.
+    """
+    return _ACTION_REGISTRY.stop(timeout=timeout)
+
+
 def _terminate_desktop_managed_gateway() -> None:
     """Stop a live gateway restart child when its Desktop backend shuts down."""
     proc = _ACTION_PROCS.get("gateway-restart")
@@ -322,37 +338,73 @@ def _dashboard_spawn_executable() -> str:
     return sys.executable
 
 
-def _spawn_hermes_action(
-    subcommand: List[str], name: str, *, env_overrides: Optional[Dict[str, str]] = None
-) -> subprocess.Popen:
-    """Spawn ``hermes <subcommand>`` detached (via ``hermes_cli.main``) and record the handle."""
-    from hermes_cli.web_server import PROJECT_ROOT
-    _ACTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = open(_ACTION_LOG_DIR / _ACTION_LOG_FILES[name], "ab", buffering=0)
-    log_file.write(f"\n=== {name} started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode())
+_ACTION_REGISTRY = ActionRegistry()
 
-    cmd = [_dashboard_spawn_executable(), "-m", "hermes_cli.main", *subcommand]
-    # The dashboard runs inside the gateway process, so os.environ carries _HERMES_GATEWAY=1;
-    # inheriting it trips the child's in-process restart-loop guard (exit 1). Drop it, like
-    # the gateway's own restart watcher does.
-    # The gateway's own restart watcher already drops it (gateway/run.py); mirror that here (#52470).
-    action_env = {**os.environ, "HERMES_NONINTERACTIVE": "1"}
-    action_env.pop("_HERMES_GATEWAY", None)
-    detach = {"creationflags": windows_detach_flags()} if sys.platform == "win32" else {"start_new_session": True}
-    proc = subprocess.Popen(
-        cmd, cwd=str(PROJECT_ROOT), stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT,
-        env={**action_env, **(env_overrides or {})}, **detach,
-    )
-    log_file.close()  # child holds its own dup'd fd; keeping ours leaks one per action
-    _ACTION_RESULTS.pop(name, None)
-    _ACTION_COMMANDS[name] = tuple(subcommand)
-    _ACTION_PROCS[name] = proc
-    action_id = (env_overrides or {}).get("HERMES_ACTION_ID")
-    if action_id:
-        _ACTION_IDS[name] = action_id
-    else:
-        _ACTION_IDS.pop(name, None)
-    return proc
+
+def _spawn_hermes_action(
+    subcommand: List[str], name: str, *, env_overrides: Optional[Dict[str, str]] = None,
+    role: str = "ordinary",
+) -> subprocess.Popen:
+    """Reserve ownership before Popen; latest-name dictionaries are UI only."""
+    from hermes_cli.web_server import PROJECT_ROOT
+    instance_id = _ACTION_REGISTRY.reserve(name, role=role)
+    proc = None
+    driver = None
+    try:
+        if role == "recovery":
+            from hermes_cli.update_handoff_driver import ParentDriver, require_supported
+            require_supported()
+        _ACTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_ACTION_LOG_DIR / _ACTION_LOG_FILES[name], "ab", buffering=0) as log_file:
+            log_file.write(f"\n=== {name} started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode())
+            cmd = [_dashboard_spawn_executable(), "-m", "hermes_cli.main", *subcommand]
+            if role == "recovery":
+                import secrets
+                run_token = secrets.token_hex(32)
+                cmd = [cmd[0], "-m", "hermes_cli.update_handoff_child", run_token, *subcommand]
+            # Do not inherit the gateway's in-process restart-loop guard.
+            action_env = {**os.environ, "HERMES_NONINTERACTIVE": "1"}
+            action_env.pop("_HERMES_GATEWAY", None)
+            detach = {"creationflags": windows_detach_flags()} if sys.platform == "win32" else {"start_new_session": True}
+            proc = subprocess.Popen(
+                cmd, cwd=str(PROJECT_ROOT),
+                stdin=subprocess.PIPE if role == "recovery" else subprocess.DEVNULL,
+                stdout=subprocess.PIPE if role == "recovery" else log_file,
+                stderr=log_file if role == "recovery" else subprocess.STDOUT,
+                bufsize=0, close_fds=True,
+                env={**action_env, **(env_overrides or {})}, **detach,
+            )
+            _ACTION_REGISTRY.attach(instance_id, proc)
+        _ACTION_RESULTS.pop(name, None)
+        _ACTION_COMMANDS[name] = tuple(subcommand)
+        _ACTION_PROCS[name] = proc
+        action_id = (env_overrides or {}).get("HERMES_ACTION_ID")
+        if action_id:
+            _ACTION_IDS[name] = action_id
+        else:
+            _ACTION_IDS.pop(name, None)
+        if role == "recovery":
+            driver = ParentDriver(proc, instance_id)
+            _ACTION_REGISTRY.bind_driver(instance_id, driver)
+            _ACTION_REGISTRY.authorize_run(instance_id)
+            driver.connect(run_token)
+        return proc
+    except BaseException as exc:
+        if proc is not None and role == "recovery":
+            from hermes_cli.update_handoff_driver import CapabilityUnavailable
+            unavailable = isinstance(exc, CapabilityUnavailable)
+            _ACTION_REGISTRY.record_launch_failure(
+                instance_id,
+                error="update_handoff_unavailable" if unavailable else "action_start_failed",
+                message=str(exc) if unavailable else "Update bootstrap failed before CLI entry",
+            )
+        if driver is not None:
+            driver.transport.close()
+        if proc is None:
+            _ACTION_REGISTRY.spawn_failed(instance_id)
+        else:
+            _ACTION_REGISTRY.publication_failed(instance_id)
+        raise
 
 
 def _gateway_subcommand(profile: Optional[str], verb: str) -> List[str]:

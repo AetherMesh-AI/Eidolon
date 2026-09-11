@@ -90,7 +90,7 @@ def _make_packaged_executable(root: Path, monkeypatch) -> Path:
     """
     desktop_dir = root / "apps" / "desktop"
     if sys.platform == "darwin":
-        exe = desktop_dir / "release" / "mac-arm64" / "Hermes.app" / "Contents" / "MacOS" / "Hermes"
+        exe = desktop_dir / "release" / "mac-arm64" / "Eidolon.app" / "Contents" / "MacOS" / "Eidolon"
     elif sys.platform == "win32":
         exe = desktop_dir / "release" / "win-unpacked" / "Hermes.exe"
     else:
@@ -114,7 +114,7 @@ def _staging_dir_from(cmd) -> Path:
 def _packaged_exe_rel() -> Path:
     """Packaged-exe path relative to electron-builder's output dir on THIS host."""
     if sys.platform == "darwin":
-        return Path("mac-arm64") / "Hermes.app" / "Contents" / "MacOS" / "Hermes"
+        return Path("mac-arm64") / "Eidolon.app" / "Contents" / "MacOS" / "Eidolon"
     if sys.platform == "win32":
         return Path("win-unpacked") / "Hermes.exe"
     return Path("linux-unpacked") / "hermes"
@@ -246,6 +246,14 @@ def test_gui_install_env_prepends_managed_node_on_bare_path(tmp_path, monkeypatc
 
 
 # ── Electron build-cache recovery tests ───────────────────────────────
+
+
+@pytest.mark.macos_only
+def test_packaged_eidolon_executable_is_discovered(tmp_path):
+    executable = tmp_path / "mac-arm64/Eidolon.app/Contents/MacOS/Eidolon"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("packaged executable", encoding="utf-8")
+    assert main_desktop._desktop_packaged_executable_in(tmp_path) == executable
 
 
 def _write_zip(path: Path) -> None:

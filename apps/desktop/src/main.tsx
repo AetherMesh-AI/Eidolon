@@ -21,6 +21,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router'
 
 import App from './app'
+import { organizationStartHash } from './app/eidolon/navigation'
 import { RootErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
@@ -48,7 +49,7 @@ if (import.meta.env.MODE !== 'production' || import.meta.env.VITE_PERF_PROBE ===
 const winParam = new URLSearchParams(window.location.search).get('win')
 
 if (winParam === 'hud') {
-  document.title = 'Hermes HUD'
+  document.title = 'Eidolon HUD'
 }
 
 if (winParam === 'overlay') {
@@ -62,6 +63,11 @@ if (winParam === 'overlay') {
   // main window's focus/visibility state to :root so decorative infinite
   // animations stop producing frames when nobody can see them.
   installRendererAnimationPauseState()
+  // Only a truly fresh primary window starts at Home. Explicit chat/session
+  // hashes and all auxiliary-window entry points retain their old semantics.
+  if (!winParam && !window.location.hash) {
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${organizationStartHash(window.location.hash)}`)
+  }
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

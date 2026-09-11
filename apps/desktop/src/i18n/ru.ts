@@ -3029,7 +3029,7 @@ export const ru = defineLocale({
     applyRemote: 'Применить и переподключиться',
     backToSetup: 'Назад',
     failedTitle: 'Установка не удалась',
-    settingUpTitle: 'Настройка Hermes Agent',
+    settingUpTitle: 'Настройка Eidolon',
     finishingTitle: 'Завершаем',
     failedDesc:
       'Один из шагов установки завершился ошибкой. На Windows это может произойти, если запущена другая инстанция Hermes CLI или desktop. Остановите все работающие инстанции Hermes и повторите. Подробности — ниже или в журнале desktop.',
@@ -3051,10 +3051,10 @@ export const ru = defineLocale({
     reloadRetry: 'Перезагрузить и повторить'
   },
   onboarding: {
-    headerTitle: 'Настроим для вас Hermes Agent',
+    headerTitle: 'Настроим для вас Eidolon',
     headerDesc: 'Подключите провайдера модели, чтобы начать общение. Большинство вариантов — в один клик.',
-    preparingInstall: 'Hermes завершает установку. Обычно это занимает меньше минуты при первом запуске.',
-    starting: 'Запускаем Hermes…',
+    preparingInstall: 'Eidolon завершает установку. Обычно это занимает меньше минуты при первом запуске.',
+    starting: 'Запускаем Eidolon…',
     lookingUpProviders: 'Ищем провайдеров...',
     collapse: 'Свернуть',
     otherProviders: 'Другие провайдеры',

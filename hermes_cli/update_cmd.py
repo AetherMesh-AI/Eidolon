@@ -306,13 +306,10 @@ def _refuse_update_for_contended_shims(exc: BaseException) -> None:
 
 
 def _should_zip_fallback_on_update_error(exc: BaseException) -> bool:
-    """ZIP fallback is only for Windows git file-I/O breakage: after a dep-install failure the
-    pull already succeeded, so a ZIP overlay can't fix it and would replace every top-level
-    entry except venv/node_modules/.git/.env, deleting uncommitted and untracked files."""
-    return (
-        isinstance(exc, subprocess.CalledProcessError)
-        and _m()._is_windows()
-        and _called_process_error_is_git(exc))
+    """Fail closed on every Git or installer error; Eidolon never uses ZIP fallback."""
+    # Eidolon has a Git-only, validated-origin update contract. A Git failure
+    # must not switch to an archive (including the legacy upstream ZIP path).
+    return False
 
 
 def _print_called_process_error_tail(exc: subprocess.CalledProcessError, *, limit: int = 12) -> None:
@@ -461,6 +458,14 @@ def _run_logged_subprocess(cmd, *, cwd=None, env=None):
         proc.stdout.close()
 
 
+def _require_eidolon_origin(git_cmd):
+    from hermes_cli.eidolon_update_policy import is_official_source
+    origin = _git_run(git_cmd, ["remote", "get-url", "origin"])
+    if origin.returncode or not is_official_source(origin.stdout.strip()):
+        print("✗ Eidolon updates require origin=https://github.com/AetherMesh-AI/Eidolon.git; no upstream fallback.")
+        sys.exit(2)
+
+
 def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     """``hermes update --check``: fetch and report without installing. ``branch_explicit`` is
     True iff --branch was passed (Docker installs print a notice instead of dropping the flag)."""
@@ -480,6 +485,7 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         sys.exit(1)
 
     git_cmd = _base_git_cmd()
+    _require_eidolon_origin(git_cmd)
 
     # Interrupted fetches leave .git/*.lock behind ("File exists" forever); self-heal first.
     from hermes_cli.gitlock import clear_stale_git_locks, clear_stale_tmp_packs
@@ -491,24 +497,16 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     if swept:
         print(f"  (removed {len(swept)} aborted-fetch pack temp file(s))")
 
-    # Fetch only <branch> (a bare fetch pulls thousands of auto-generated branches). Prefer
-    # upstream only for main (a fork's other branches have no upstream counterpart). Installer
-    # checkouts are shallow: a plain fetch would unshallow them and rev-list would report a
-    # bogus huge "behind" count, so fetch --depth 1 and report presence-only.
+    # Recover source history before deciding ancestry; never compare SHA ordering.
     is_shallow = _is_shallow_checkout(git_cmd)
-    depth_args = ["--depth", "1"] if is_shallow else []
 
-    # Probe locally for an 'upstream' remote before a network fetch non-forks always fail.
-    fetch_result = None
-    if branch == "main" and _git_run(git_cmd, ["remote", "get-url", "upstream"]).returncode == 0:
-        print("→ Fetching from upstream...")
-        fetch_result = _git_run(git_cmd, ["fetch"] + depth_args + ["upstream", branch], network=True)
-    if fetch_result is not None and fetch_result.returncode == 0:
-        compare_branch = f"upstream/{branch}"
-    else:
-        print("→ Fetching from origin...")
-        fetch_result = _git_run(git_cmd, ["fetch"] + depth_args + ["origin", branch], network=True)
-        compare_branch = f"origin/{branch}"
+    if branch != "main":
+        print("✗ Eidolon updates target main only.")
+        sys.exit(2)
+    print("→ Fetching Eidolon origin/main...")
+    fetch_result = _git_run(git_cmd, ["fetch", "--no-tags"] + (["--unshallow"] if is_shallow else []) + ["origin", "+refs/heads/main:refs/remotes/origin/main"], network=True)
+    compare_branch = "origin/main"
+    is_shallow = False  # Complete source ancestry, not release or SHA ordering.
 
     if fetch_result.returncode != 0:
         _print_fetch_failure(fetch_result.stderr)
@@ -520,17 +518,10 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         print(f"✗ Branch '{branch}' not found on {compare_branch.split('/', 1)[0]}.")
         sys.exit(1)
 
-    if is_shallow:
-        # No history across the shallow boundary: compare tip SHAs, then recover the
-        # exact count via the GitHub compare API (complete graph).
-        head_sha, target_sha = _tip_shas(git_cmd, compare_branch)
-        if head_sha and target_sha and head_sha == target_sha:
-            print("✓ Already up to date.")
-            return
-        from hermes_cli.banner import _github_compare_behind
-        # counted == 0 means local-ahead, not behind; None means the API could not count.
-        _print_update_check_result(_github_compare_behind(head_sha, target_sha), compare_branch)
-        return
+    from hermes_cli.eidolon_update_policy import relation
+    if relation(_m().PROJECT_ROOT) == "diverged":
+        print("✗ Eidolon source history diverged; automatic update refused.")
+        sys.exit(2)
 
     rev_result = _git_run(git_cmd, ["rev-list", f"HEAD..{compare_branch}", "--count"], check=True)
     _print_update_check_result(int(rev_result.stdout.strip()), compare_branch)
@@ -1034,10 +1025,11 @@ def _prepare_git_command() -> tuple[bool, list, bool]:
     use_zip_update = not git_dir.exists()
     if use_zip_update and sys.platform != "win32":
         print("✗ Not a git repository. Please reinstall:")
-        print("  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash")
+        print("  curl -fsSL https://raw.githubusercontent.com/AetherMesh-AI/Eidolon/main/scripts/install.sh | bash")
         sys.exit(1)
 
     git_cmd = _base_git_cmd()
+    _require_eidolon_origin(git_cmd)
     if sys.platform == "win32" and git_dir.exists():
         _git_run(git_cmd, ["config", "windows.appendAtomically", "false"])
     # A broken Git-for-Windows trampoline refuses every call with a "BUG (fork bomb)" guard;
@@ -1109,7 +1101,7 @@ def _current_branch_name(git_cmd, *, check: bool = False) -> str:
 
 def _handle_update_called_process_error(
     e, args, gateway_mode: bool, had_desktop_app_before_update: bool) -> None:
-    """Git/installer failure: ZIP-fallback when safe, else report and ``sys.exit(1)``."""
+    """Report Git/installer failure and exit 1; Eidolon's policy disables ZIP fallback."""
     stage = _format_update_failure_stage(e)
     if _should_zip_fallback_on_update_error(e):
         print(f"⚠ {stage}: {e}")
@@ -1303,6 +1295,9 @@ def _cmd_update_impl(args, gateway_mode: bool):
     try:
         # Scoped fetch: a bare `git fetch origin` pulls thousands of branches and can stall.
         branch = _m()._resolve_update_branch(args)
+        if branch != "main":
+            print("✗ Eidolon updates target main only.")
+            sys.exit(2)
 
         # Self-heal abandoned .git/*.lock files (crashed fetch) or the fetch fails "File exists".
         from hermes_cli.gitlock import clear_stale_git_locks, clear_stale_tmp_packs
@@ -1319,11 +1314,17 @@ def _cmd_update_impl(args, gateway_mode: bool):
         _m()._warn_orphaned_update_autostashes(git_cmd, _m().PROJECT_ROOT)
 
         print("→ Fetching updates...")
-        fetch_result = _git_run(git_cmd, ["fetch", "origin", branch], network=True)
+        shallow = _git_run(git_cmd, ["rev-parse", "--is-shallow-repository"]).stdout.strip() == "true"
+        fetch_result = _git_run(git_cmd, ["fetch", "--no-tags"] + (["--unshallow"] if shallow else []) + ["origin", "+refs/heads/main:refs/remotes/origin/main"], network=True)
         if fetch_result.returncode != 0:
             _print_fetch_failure(fetch_result.stderr)
             sys.exit(1)
 
+        from hermes_cli.eidolon_update_policy import relation as source_relation
+        relation = source_relation(_m().PROJECT_ROOT)
+        if relation in ("diverged", "unknown"):
+            print(f"✗ Eidolon source history is {relation}; refusing automatic rewrite. Resolve manually.")
+            sys.exit(2)
         current_branch = _current_branch_name(git_cmd, check=True)
         _plan = _prepare_checkout_for_update(
             git_cmd, branch, current_branch, is_fork=is_fork, assume_yes=assume_yes,

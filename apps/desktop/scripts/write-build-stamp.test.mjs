@@ -14,7 +14,7 @@ import {
 test('fromCI reads GITHUB_SHA / GITHUB_REF_NAME', () => {
   assert.deepEqual(
     fromCI({ GITHUB_SHA: 'a'.repeat(40), GITHUB_REF_NAME: 'release' }),
-    { commit: 'a'.repeat(40), branch: 'release', dirty: false, source: 'ci' }
+    { commit: 'a'.repeat(40), branch: 'release', dirty: null, source: 'ci' }
   )
   assert.equal(fromCI({}), null)
 })
@@ -30,7 +30,7 @@ test('fromLocalGit reads HEAD + branch + dirty status', () => {
     calls.push(cmd)
     if (cmd === 'git rev-parse HEAD') return 'b'.repeat(40)
     if (cmd === 'git rev-parse --abbrev-ref HEAD') return 'main'
-    if (cmd === 'git status --porcelain -uno') return ' M apps/desktop/package.json'
+    if (cmd === 'git status --porcelain --untracked-files=all') return ' M apps/desktop/package.json'
     return null
   }
   assert.deepEqual(fromLocalGit('/repo', execFn), {
@@ -46,7 +46,7 @@ test('fromFallback uses the all-zero placeholder commit', () => {
   assert.deepEqual(fromFallback(), {
     commit: FALLBACK_COMMIT,
     branch: FALLBACK_BRANCH,
-    dirty: false,
+    dirty: null,
     source: 'fallback'
   })
   assert.equal(isFallbackCommit(FALLBACK_COMMIT), true)
@@ -66,7 +66,7 @@ test('resolveStamp prefers CI over local git over fallback', () => {
     execFn: (cmd) => {
       if (cmd === 'git rev-parse HEAD') return 'd'.repeat(40)
       if (cmd === 'git rev-parse --abbrev-ref HEAD') return 'main'
-      if (cmd === 'git status --porcelain -uno') return ''
+      if (cmd === 'git status --porcelain --untracked-files=all') return ''
       return null
     }
   })
@@ -80,7 +80,7 @@ test('resolveStamp falls back when neither CI nor git is available', () => {
   assert.deepEqual(stamp, {
     commit: FALLBACK_COMMIT,
     branch: FALLBACK_BRANCH,
-    dirty: false,
+    dirty: null,
     source: 'fallback'
   })
 })

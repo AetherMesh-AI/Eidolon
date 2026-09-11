@@ -188,19 +188,19 @@ test('resolveInstallScript downloads fallback stamps by branch instead of zero c
   }
 })
 
-test('resolveInstallScript prefers a cached script without touching the network', async () => {
+test('resolveInstallScript prefers an unpinned cached script without touching the network', async () => {
   const home = mkTmpHome()
 
   try {
     const commit = 'a'.repeat(40)
-    const cached = cachedScriptPath(home, commit)
+    const cached = cachedScriptPath(home, 'fallback-main')
     fs.mkdirSync(path.dirname(cached), { recursive: true })
     fs.writeFileSync(cached, '#!/bin/sh\necho cached\n')
 
     const logs = []
 
     const result = await resolveInstallScript({
-      installStamp: { commit },
+      installStamp: { commit: ZERO_COMMIT, branch: 'main' },
       sourceRepoRoot: null,
       hermesHome: home,
       emit: ev => logs.push(ev)
@@ -213,7 +213,7 @@ test('resolveInstallScript prefers a cached script without touching the network'
   }
 })
 
-test('resolveInstallScript falls back to the installed agent checkout on a 404', async () => {
+test('resolveInstallScript refuses installed-agent bytes after a pinned 404', async () => {
   const home = mkTmpHome()
 
   try {
@@ -226,7 +226,7 @@ test('resolveInstallScript falls back to the installed agent checkout on a 404',
 
     const logs = []
 
-    const result = await resolveInstallScript({
+    await assert.rejects(resolveInstallScript({
       installStamp: { commit },
       sourceRepoRoot: null,
       hermesHome: home,
@@ -235,16 +235,9 @@ test('resolveInstallScript falls back to the installed agent checkout on a 404',
       _download: async () => {
         throw new Error('Failed to download install.sh: HTTP 404')
       }
-    })
+    }), /HTTP 404/)
 
-    assert.equal(result.source, 'installed-agent')
-    // It should have copied the installer into the bootstrap cache.
-    assert.equal(result.path, cachedScriptPath(home, commit))
-    assert.ok(fs.existsSync(result.path), 'fallback script copied into cache')
-    assert.ok(
-      logs.some(ev => /falling back to installed agent/.test(ev.line || '')),
-      'emits a fallback log line'
-    )
+    assert.equal(fs.existsSync(cachedScriptPath(home, commit)), false)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }

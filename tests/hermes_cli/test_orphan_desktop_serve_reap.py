@@ -11,10 +11,20 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import pytest
+
+
 from hermes_cli.dashboard_procs import (
     _is_desktop_local_serve_cmdline,
     _reap_orphaned_desktop_local_serves,
 )
+
+
+@pytest.fixture(autouse=True)
+def owned_fixture_candidates(monkeypatch):
+    # These tests isolate shape/ancestry/lock/age guards using synthetic PIDs.
+    # Real ledger/home/incarnation boundaries are covered in test_orphan_process_ownership.
+    monkeypatch.setattr('hermes_cli.process_identity.owned_process_start_time', lambda pid, purpose: 1234.0)
 
 
 def test_desktop_local_serve_shape_matches_ephemeral_loopback():
