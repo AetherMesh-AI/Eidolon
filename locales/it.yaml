@@ -112,7 +112,7 @@ gateway:
   debug:
     upload_failed:         "✗ Caricamento del report di debug non riuscito: {error}"
     header:                "**Report di debug caricato:**"
-    auto_delete:           "⏱ I paste verranno eliminati automaticamente tra 6 ore."
+    auto_delete:           "⏱ I tempi di eliminazione dipendono dal servizio e non sono garantiti."
     full_logs_hint:        "Per il caricamento dei log completi, usa `hermes debug share` dalla CLI."
     share_hint:            "Condividi questi link con il team Hermes per ricevere supporto."
 

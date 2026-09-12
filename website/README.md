@@ -26,6 +26,12 @@ This command generates static content into the `build` directory and can be serv
 
 ## Deployment
 
+> **Inherited upstream deployment instructions.** This site retains the Hermes Agent
+> identity, upstream URL, and NousResearch/hermes-agent deployment configuration in
+> `docusaurus.config.ts`. The recipes below describe that inherited setup, not an
+> authorized Eidolon publication destination. Do not run them as an Eidolon deployment;
+> ownership, destination, and publication authorization must be established separately.
+
 Using SSH:
 
 ```bash

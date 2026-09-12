@@ -262,7 +262,9 @@ describe('refreshOnboarding', () => {
     expect(notifySpy).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'runtime-not-ready',
-        kind: 'error'
+        kind: 'error',
+        message:
+          'Eidolon could not verify the running backend on startup. Some features may be unavailable until the gateway is reachable.'
       })
     )
     expect($desktopOnboarding.get().configured).toBe(true)

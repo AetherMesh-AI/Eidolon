@@ -4,7 +4,7 @@ Eidolon is an open-source project building a desktop home for persistent AI agen
 
 The project brings agent interaction, local data, and coordinated work into one application. You should be able to return to an agent, continue your conversation, and understand what it is doing without managing a collection of disconnected sessions.
 
-> **Early Alpha / Proof of Concept.** Work toward a `v0.1.0` prerelease is in progress; this README does not announce a published release. Eidolon is under active development. The direction described here extends beyond the capabilities currently verified. It is not yet a production-ready application.
+> **Early Alpha / Proof of Concept.** Consult [Eidolon releases](https://github.com/AetherMesh-AI/Eidolon/releases) for build-specific artifacts, verification scope, and limitations. Eidolon is under active development. The direction described here extends beyond the capabilities currently verified. A published artifact does not imply production readiness or supported installers on every platform.
 
 ## The experience we are building
 

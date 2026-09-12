@@ -112,7 +112,7 @@ gateway:
   debug:
     upload_failed:         "✗ 無法上傳除錯報告：{error}"
     header:                "**除錯報告已上傳：**"
-    auto_delete:           "⏱ 貼上的內容將於 6 小時後自動刪除。"
+    auto_delete:           "⏱ 刪除時間取決於服務，無法保證。"
     full_logs_hint:        "如需上傳完整紀錄，請在 CLI 中使用 `hermes debug share`。"
     share_hint:            "請將這些連結分享給 Hermes 團隊以取得支援。"
 

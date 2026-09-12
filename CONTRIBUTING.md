@@ -1,6 +1,6 @@
 # Contributing to Eidolon
 
-Eidolon is an independent project building a desktop home for persistent AI agents. Read the [project overview](README.md) for its direction and the distinction between existing code, prototypes, and verified behavior. Work toward a `v0.1.0` prerelease is not a declaration that a release is available or accepted.
+Eidolon is an independent project building a desktop home for persistent AI agents. Read the [project overview](README.md) for its direction and the distinction between existing code, prototypes, and verified behavior. Consult [Eidolon releases](https://github.com/AetherMesh-AI/Eidolon/releases) for build-specific verification scope and limitations; publication does not establish acceptance of every feature or platform.
 
 ## Before you start
 

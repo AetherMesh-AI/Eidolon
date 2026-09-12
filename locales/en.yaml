@@ -127,7 +127,7 @@ gateway:
   debug:
     upload_failed:         "✗ Failed to upload debug report: {error}"
     header:                "**Debug report uploaded:**"
-    auto_delete:           "⏱ Pastes will auto-delete in 6 hours."
+    auto_delete:           "⏱ Deletion timing depends on the service and is not guaranteed."
     full_logs_hint:        "For full log uploads, use `hermes debug share` from the CLI."
     share_hint:            "Share these links with the Hermes team for support."
 

@@ -78,6 +78,10 @@ export function appIconCandidates(opts: {
 
   return [
     ...(isWindows ? [path.join(resourcesPath ?? '', 'icon.ico'), path.join(appRoot, 'assets', 'icon.ico')] : []),
+    // Prefer the packaging artwork; retain legacy PNGs for older/partial builds.
+    path.join(appRoot, 'public', 'icon.png'),
+    path.join(appRoot, 'dist', 'icon.png'),
+    path.join(unpackedPathFor(appRoot), 'dist', 'icon.png'),
     path.join(appRoot, 'public', 'apple-touch-icon.png'),
     path.join(appRoot, 'dist', 'apple-touch-icon.png'),
     path.join(unpackedPathFor(appRoot), 'dist', 'apple-touch-icon.png')

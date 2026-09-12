@@ -50,7 +50,7 @@ export const zhHant: Translations = {
   },
 
   app: {
-    brand: "Hermes Agent",
+    brand: "Eidolon",
     brandShort: "HA",
     closeNavigation: "關閉導覽",
     closeModelTools: "關閉模型與工具",
@@ -439,7 +439,7 @@ export const zhHant: Translations = {
     showValue: "顯示實際值",
     hideValue: "隱藏值",
     customTitle: "自訂密鑰",
-    customHint: "儲存在 .env 中、Hermes 無法識別的任意環境變數。可用於為技能、MCP 伺服器或你自己的工具注入環境變數。",
+    customHint: "儲存在 .env 中、Eidolon 無法識別的任意環境變數。可用於為技能、MCP 伺服器或你自己的工具注入環境變數。",
     customConfigured: "已設定 {count} 個自訂密鑰",
     addCustomKey: "新增自訂密鑰",
     customKeyName: "變數名稱",

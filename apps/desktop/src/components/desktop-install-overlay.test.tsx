@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopBootstrapEvent, DesktopBootstrapState, DesktopConnectionProbeResult } from '@/global'
+import { TRANSLATIONS } from '@/i18n'
 
 import { DesktopInstallOverlay } from './desktop-install-overlay'
 
@@ -90,6 +91,20 @@ afterEach(() => {
 })
 
 describe('DesktopInstallOverlay first-run setup', () => {
+  it.each(Object.entries(TRANSLATIONS))('uses Eidolon for desktop setup and restart copy in %s', (_locale, messages) => {
+    for (const key of ['setupChoiceTitle', 'settingUpTitle', 'localStartUnavailable', 'failedDesc'] as const) {
+      expect(messages.install[key]).toContain('Eidolon')
+      expect(messages.install[key]).not.toContain('Hermes Desktop')
+    }
+  })
+
+  it('renders the Eidolon heading while the upstream installer is active', async () => {
+    installDesktopMock(bootstrapState({ active: true }))
+    render(<DesktopInstallOverlay />)
+    expect(await screen.findByText('Setting up Eidolon')).toBeTruthy()
+    expect(screen.getByText(/Fetching installer manifest/i)).toBeTruthy()
+  })
+
   it('shows the remote/local choice without installer progress', async () => {
     installDesktopMock(
       bootstrapState({
@@ -99,7 +114,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     render(<DesktopInstallOverlay />)
 
-    expect(await screen.findByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(await screen.findByText('Set up Eidolon')).toBeTruthy()
     expect(screen.getByText('Connect to existing Hermes')).toBeTruthy()
     expect(screen.getByText('Install Hermes locally')).toBeTruthy()
     expect(screen.queryByText(/steps complete/i)).toBeNull()
@@ -118,13 +133,13 @@ describe('DesktopInstallOverlay first-run setup', () => {
     fireEvent.click(await screen.findByText('Install Hermes locally'))
 
     expect(desktop.continueBootstrapLocal).toHaveBeenCalledTimes(1)
-    expect(screen.getByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(screen.getByText('Set up Eidolon')).toBeTruthy()
 
     act(() => {
       desktop.emitBootstrapEvent({ type: 'manifest', protocolVersion: 1, stages: [] })
     })
 
-    await waitFor(() => expect(screen.queryByText('Set up Hermes Desktop')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('Set up Eidolon')).toBeNull())
     expect(screen.getByText(/Fetching installer manifest/i)).toBeTruthy()
   })
 
@@ -142,7 +157,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
     fireEvent.click(install)
 
     expect(
-      await screen.findByText('Local installation could not start. Restart Hermes Desktop and try again.')
+      await screen.findByText('Local installation could not start. Restart Eidolon and try again.')
     ).toBeTruthy()
     expect(install.disabled).toBe(false)
   })
@@ -167,7 +182,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       await Promise.resolve()
     })
 
-    expect(screen.queryByText('Local installation could not start. Restart Hermes Desktop and try again.')).toBeTruthy()
+    expect(screen.queryByText('Local installation could not start. Restart Eidolon and try again.')).toBeTruthy()
   })
 
   it('clears a stale local-start error when a repair presents a different root', async () => {
@@ -182,7 +197,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     fireEvent.click((await screen.findByText('Install Hermes locally')).closest('button') as HTMLButtonElement)
     expect(
-      await screen.findByText('Local installation could not start. Restart Hermes Desktop and try again.')
+      await screen.findByText('Local installation could not start. Restart Eidolon and try again.')
     ).toBeTruthy()
 
     act(() => {
@@ -194,7 +209,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       })
     })
 
-    expect(screen.queryByText('Local installation could not start. Restart Hermes Desktop and try again.')).toBeNull()
+    expect(screen.queryByText('Local installation could not start. Restart Eidolon and try again.')).toBeNull()
   })
 
   it('opens the remote connection form from the first-run choice', async () => {
@@ -227,7 +242,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     fireEvent.click(screen.getByText('Back'))
 
-    expect(await screen.findByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(await screen.findByText('Set up Eidolon')).toBeTruthy()
     expect(screen.getByText('Install Hermes locally')).toBeTruthy()
   })
 

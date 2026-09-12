@@ -113,8 +113,8 @@ upload, but the following personal data is NOT redacted and will be public:
   • Local filesystem paths
   • Any other PII present in the logs
 
-The resulting URL is public to anyone who has the link. Pastes auto-delete
-after 6 hours, but may be archived by third parties in the meantime.
+The resulting URL is public to anyone who has the link. Deletion timing
+depends on the service and is not guaranteed. Third parties may archive it.
 
 Use --local to view the report without uploading.
 """
@@ -124,7 +124,7 @@ _GATEWAY_PRIVACY_NOTICE = (
     "(may contain conversation fragments) to a public paste service. "
     "Full logs are NOT included from the gateway — use `hermes debug share` "
     "from the CLI for full log uploads.\n"
-    "Pastes auto-delete after 6 hours.")
+    "Deletion timing depends on the service and is not guaranteed.")
 
 
 def _extract_paste_id(url: str) -> Optional[str]:
@@ -492,8 +492,10 @@ def run_debug_share(args):
         print(f"  {label:<{label_width}}  {url}")
     if result.failures:
         print(f"\n  (failed to upload: {', '.join(result.failures)})")
-    print(f"\n⏱  Pastes will auto-delete in {result.auto_delete_seconds // 3600} hours.\n"
-          "To delete now:  hermes debug delete <url>\n"
+    print(f"\n⏱  Requested paste.rs cleanup interval: {result.auto_delete_seconds // 3600} hours.\n"
+          "Cleanup is best-effort; deletion timing is not guaranteed.\n"
+          "For dpaste.com, the requested expiry is set by --expire (default: 7 days).\n"
+          "To request deletion of a paste.rs URL now:  hermes debug delete <url>\n"
           "\nShare these links with the Hermes team for support.")
 
 

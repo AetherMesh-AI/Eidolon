@@ -112,7 +112,7 @@ gateway:
   debug:
     upload_failed:         "✗ Debug-Bericht konnte nicht hochgeladen werden: {error}"
     header:                "**Debug-Bericht hochgeladen:**"
-    auto_delete:           "⏱ Pastes werden in 6 Stunden automatisch gelöscht."
+    auto_delete:           "⏱ Der Zeitpunkt der Löschung hängt vom Dienst ab und ist nicht garantiert."
     full_logs_hint:        "Für vollständige Log-Uploads verwenden Sie `hermes debug share` aus der CLI."
     share_hint:            "Teilen Sie diese Links mit dem Hermes-Team, um Unterstützung zu erhalten."
 

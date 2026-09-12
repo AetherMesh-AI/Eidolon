@@ -1,56 +1,44 @@
-# Hermes Desktop ☤
+# Eidolon Desktop
 
-<p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent/releases"><img src="https://img.shields.io/badge/Download-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-FFD700?style=for-the-badge" alt="Download"></a>
-  <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/hermes-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-</p>
+The native desktop application for [Eidolon](../../README.md), an independent project building a home for persistent AI agents. The intended experience centers on ongoing agent conversations, understandable activity, and user control.
 
-**The native desktop app for [Hermes Agent](../../README.md) — the self-improving AI agent from [Nous Research](https://nousresearch.com).** Same agent, same skills, same memory as the CLI and gateway, in a polished native window — chat with streaming tool output, side-by-side previews, a file browser, voice, and settings, no terminal required. Available for **macOS, Windows, and Linux**.
+> **Early Alpha / Proof of Concept.** Existing routes and integrations are not evidence of complete AI conversation flows, reliable agent switching, or supported installers on every platform. See the [project overview](../../README.md#the-foundation-today) for verified boundaries and known holds.
 
-<table>
-<tr><td><b>Chat with the full agent</b></td><td>Streaming responses, live tool activity, structured tool summaries, and the same conversation history as every other Hermes surface.</td></tr>
-<tr><td><b>Side-by-side previews</b></td><td>Render web pages, files, and tool outputs in a right-hand pane while you keep chatting.</td></tr>
-<tr><td><b>File browser</b></td><td>Explore and preview the working directory without leaving the app.</td></tr>
-<tr><td><b>Voice</b></td><td>Talk to Hermes and hear it back.</td></tr>
-<tr><td><b>Settings & onboarding</b></td><td>Manage providers, models, tools, and credentials from a real UI. First-run setup gets you to your first message in seconds.</td></tr>
-<tr><td><b>Stays current</b></td><td>Built-in updates pull the latest agent and rebuild the app in place.</td></tr>
-</table>
+## What is here
 
----
+| Surface | Purpose and current boundary |
+| --- | --- |
+| Agent conversations | Canonical per-agent chats, with bounded synthetic persistence evidence. Actual AI conversation flows and reliable first-attempt switching still need acceptance. |
+| Chat and previews | Streaming transcript, tool activity, file browser, and side-by-side previews are existing integration surfaces, not an end-to-end acceptance claim. |
+| Voice and settings | Existing voice controls and provider, model, tool, and credential settings depend on runtime configuration and external providers. |
+| Home, Objectives, Organization, Activity, Knowledge | Local planning and knowledge prototypes. Creating a plan does not dispatch work; local records do not establish durable organization memory or cross-agent sharing. |
+| Updates | Existing source-based update machinery. A successful local fixture does not establish a supported installed-update path for every platform. |
 
-## Install
+## Trying the desktop
 
-### Install with Hermes (recommended)
+Use disposable data for experimental builds. Consult [Eidolon releases](https://github.com/AetherMesh-AI/Eidolon/releases) for build-specific instructions, artifacts, verification scope, and limitations. Source availability and packaging targets are not a promise of tested or signed installers for macOS, Windows, or Linux.
 
-Already have the Hermes CLI? Just run:
+The compatibility CLI command remains:
 
 ```bash
 hermes desktop
 ```
 
-It builds and launches the GUI against your existing install — same config, keys, sessions, and skills. If Desktop cannot find a usable runtime or saved remote connection, first launch lets you connect to an existing Hermes gateway or install Hermes locally. Local onboarding then walks you through choosing a provider and model.
-
-### Prebuilt installers
-
-Prebuilt installers are built and distributed via [the Hermes Desktop website.](https://hermes-agent.nousresearch.com/).
-
----
+It operates on the runtime selected by your shell. An upstream installation is not converted into Eidolon by this command. Verify the checkout and application home first; do not run it against an important existing profile as an installation experiment. First-launch connection and local-install paths remain in the code, but are not a guarantee of a ready-to-use Eidolon deployment.
 
 ## Updating
 
-The app checks for updates in the background and offers a one-click update when one is ready. You can also update any time from the CLI:
+The desktop contains background update checks and a source-based rebuild path. The compatibility CLI command remains:
 
 ```bash
 hermes update
 ```
 
----
+This updates the selected runtime, not an arbitrary Eidolon checkout. Review the repository, installed build, application home, and release instructions before using either update path. Do not treat upstream releases as Eidolon updates.
 
 ## Requirements
 
-The installer handles everything for you (Python 3.11+, a portable Git, ripgrep).
+Read the root and [desktop package manifests](package.json) for current dependencies and scripts. Installer/bootstrap code exists, but it is not evidence that every dependency is installed correctly on your platform. See [CONTRIBUTING.md](../../CONTRIBUTING.md#development-and-verification) for isolation and verification guidance.
 
 ---
 
@@ -67,8 +55,6 @@ npm run dev          # Vite renderer + Electron, which boots the Python backend
 Point the app at a specific source checkout, or sandbox it away from your real config:
 
 ```bash
-# throwaway HERMES_HOME, separate Electron userData, distinct app name to avoid the single-instance lock
-../scripts/dev-sandbox.sh npm run dev
 HERMES_DESKTOP_HERMES_ROOT=/path/to/clone npm run dev
 HERMES_HOME=/tmp/throwaway npm run dev
 npm run dev:fake-boot   # exercise the startup overlay with deterministic delays
@@ -83,14 +69,16 @@ npm run dist:linux   # AppImage + deb + rpm
 npm run pack         # unpacked app under release/ (no installer)
 ```
 
-Installers are built and uploaded to GitHub Releases manually. macOS/Windows signing & notarization happen automatically when the relevant credentials are present in the environment (`CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_*` for macOS, `WIN_CSC_*` for Windows).
+These are existing packaging commands, not verified release guarantees. Signing hooks use `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_*` for macOS and `WIN_CSC_*` for Windows. Building is separate from publishing; do not upload artifacts or assume signing/notarization succeeded without release-specific authorization and evidence.
 
 ### How it works
 
-The packaged app ships the Electron shell and a native React chat surface. On
-first launch it can install the Hermes Agent runtime into `HERMES_HOME`
-(`~/.hermes`, or `%LOCALAPPDATA%\hermes` on Windows), using the same layout as a
-CLI install.
+The packaged app ships the Electron shell and a native React chat surface.
+The backend derives from Hermes Agent and retains its compatibility commands,
+protocol, and environment variable names. Desktop home selection honors
+`HERMES_HOME`; the desktop default in `electron/main.ts` is `~/.eidolon`.
+Do not assume a separate CLI installation selects the same home. First-launch
+bootstrap remains a distinct install path requiring its own verification.
 
 The app has three boundaries:
 
@@ -203,6 +191,10 @@ release-path changes.
 
 ### Troubleshooting
 
+**The reset examples below are inherited Hermes instructions, not Eidolon defaults.** They can delete an upstream installation's environment or reset its permissions. Do not copy them into an Eidolon session. First identify the selected `HERMES_HOME`, managed-install path, and installed bundle ID, and back up relevant data. Retained identifiers here describe the upstream layout; they have not been renamed into a new repair procedure.
+
+For macOS development from a local checkout, the backend can use the checkout’s `.venv`, `venv`, or an explicitly selected Python interpreter instead of the managed installation below. Removing a bootstrap marker does not force setup when the selected runtime remains usable. These examples are not a local-checkout repair procedure; do not substitute an Eidolon path or bundle ID into them.
+
 Boot logs land in `HERMES_HOME/logs/desktop.log` (includes backend output and recent Python tracebacks) — check it first if the app reports a boot failure.
 
 **macOS / Linux:**
@@ -225,15 +217,16 @@ Remove-Item "$env:LOCALAPPDATA\hermes\hermes-agent\.hermes-bootstrap-complete"
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 ```
 
-> The default Hermes home on Windows is `%LOCALAPPDATA%\hermes`. Set the `HERMES_HOME` env var if you've relocated it.
+> `%LOCALAPPDATA%\hermes` in these examples refers to the inherited Windows layout, not the current Eidolon desktop default. Resolve the actual home before troubleshooting; `HERMES_HOME` overrides may select another location.
 
 ---
 
-## Community
+## Project and upstream resources
 
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📖 [Documentation](https://hermes-agent.nousresearch.com/docs/)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
+- [Eidolon repository](https://github.com/AetherMesh-AI/Eidolon) and [Eidolon issues](https://github.com/AetherMesh-AI/Eidolon/issues) — this project's development and bug reports.
+- [Upstream Hermes documentation](https://hermes-agent.nousresearch.com/docs/) and [website](https://hermes-agent.nousresearch.com/) — runtime background, not an Eidolon installer or support promise.
+- [Upstream Nous Research Discord](https://discord.gg/NousResearch) and [Hermes issues](https://github.com/NousResearch/hermes-agent/issues) — upstream community and runtime reports, not Eidolon support channels.
+- [Upstream Hermes releases](https://github.com/NousResearch/hermes-agent/releases) and [upstream license](https://github.com/NousResearch/hermes-agent/blob/main/LICENSE) — upstream artifacts and provenance, not Eidolon distributions.
 
 ---
 
@@ -241,4 +234,4 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 
 MIT — see [LICENSE](../../LICENSE).
 
-Built by [Nous Research](https://nousresearch.com).
+Eidolon builds on Hermes Agent, originally developed by [Nous Research](https://nousresearch.com) and its contributors. Original attribution, license, and history are retained.

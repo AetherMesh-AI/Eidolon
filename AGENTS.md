@@ -1,6 +1,8 @@
-# Hermes Agent - Development Guide
+# Eidolon - Development Guide
 
-Instructions for AI coding assistants and developers working on the hermes-agent codebase.
+Instructions for AI coding assistants and developers working on the Eidolon checkout,
+which is derived from the Hermes Agent codebase by Nous Research. The Hermes descriptions
+below refer to the inherited agent runtime; they are not claims of verified Eidolon capabilities.
 This root file holds only what applies everywhere. Each area has its own `AGENTS.md` (aim for
 ~8k chars; `agent/subdirectory_hints.py` delivers up to 32k and truncates head/tail with a warning
 past that); see the **routing table** at the end and read the area file before editing in that area.
