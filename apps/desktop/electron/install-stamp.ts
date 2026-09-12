@@ -39,5 +39,5 @@ export function formatInstallVersion(stamp: { commit?: string; dirty?: boolean |
   const commit = stamp?.commit
   const exact = typeof commit === 'string' && /^[0-9a-f]{40}$/.test(commit) && !/^0+$/.test(commit)
   const dirty = stamp?.dirty === true ? ' (dirty source)' : stamp?.dirty === false ? '' : ' (source status unknown)'
-  return `0.1.0 alpha · ${exact ? commit : 'unknown commit'}${dirty}`
+  return `0.1.1 alpha · ${exact ? commit : 'unknown commit'}${dirty}`
 }

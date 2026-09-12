@@ -147,7 +147,7 @@ function main() {
 
   const payload = {
     schemaVersion: STAMP_SCHEMA_VERSION,
-    version: "0.1.0",
+    version: "0.1.1",
     channel: "alpha",
     repository: "AetherMesh-AI/Eidolon",
     updateBranch: "main",

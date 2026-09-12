@@ -39,7 +39,7 @@ def relation(root: Path, local: str = 'HEAD', target: str = 'origin/main') -> st
 def build_identity(root: Path | None = None) -> dict:
     """Exact source HEAD plus dirty state; non-Git copies report unknown honestly."""
     root = root or Path(__file__).resolve().parents[1]
-    result = {'version': '0.1.0', 'channel': 'alpha', 'commit': None, 'dirty': None}
+    result = {'version': '0.1.1', 'channel': 'alpha', 'commit': None, 'dirty': None}
     if not (root / '.git').exists():
         return result
     try:

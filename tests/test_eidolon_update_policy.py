@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+from hermes_cli import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +59,7 @@ def test_git_ancestry_not_hash_order(tmp_path, monkeypatch):
     side = git('rev-parse', 'HEAD', cwd=work)
     assert p.relation(work, side, second) == 'diverged'
     assert p.build_identity(work)['commit'] == side
-    assert p.build_identity(work)['version'] == '0.1.0'
+    assert p.build_identity(work)['version'] == __version__
 
 
 def test_legacy_sync_hooks_cannot_push_or_fetch(tmp_path, monkeypatch):
