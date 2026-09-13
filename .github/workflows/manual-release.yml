@@ -3,8 +3,16 @@ name: Manual Eidolon alpha release
 on:
   workflow_dispatch:
     inputs:
+      release_mode:
+        description: 'New release (safe default), or read-only replacement build for alpha-v0.1.0'
+        type: choice
+        required: true
+        default: new-release
+        options:
+          - new-release
+          - replacement-build-only
       version_tag:
-        description: 'New alpha tag matching committed desktop version (first: alpha-v0.1.0)'
+        description: 'New tag must match desktop version; replacement build must use alpha-v0.1.0'
         type: string
         required: true
         default: alpha-v0.1.0
@@ -22,6 +30,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  RELEASE_MODE: ${{ inputs.release_mode }}
   RELEASE_TAG: ${{ inputs.version_tag }}
   RELEASE_CHANGELOG: ${{ inputs.changelog }}
 
@@ -115,7 +124,54 @@ jobs:
           retention-days: 7
           overwrite: false
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.release_mode == 'replacement-build-only'
+        with:
+          name: proof-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/eidolon-release/proofs/*.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+
+  replacement-handoff:
+    if: inputs.release_mode == 'replacement-build-only'
+    needs: [preflight, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: app-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-assets
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: proof-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-proofs
+      - name: Verify complete matrix and prepare review handoff without GitHub writes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ASSETS: ${{ runner.temp }}/release-assets
+          RELEASE_PROOFS: ${{ runner.temp }}/release-proofs
+          RELEASE_HANDOFF: ${{ runner.temp }}/release-handoff
+        run: python3 .github/scripts/manual_release.py prepare-replacement
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: replacement-handoff
+          path: ${{ runner.temp }}/release-handoff/*
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+
   publish:
+    if: inputs.release_mode == 'new-release'
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 30

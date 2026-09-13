@@ -25,10 +25,14 @@ VARIANTS = [('darwin', 'arm64', 'macos', 'pkg'),
             ('win32', 'arm64', 'windows', 'exe'), ('win32', 'x64', 'windows', 'exe')]
 
 
-def validate_inputs(tag, body, version):
+def validate_inputs(tag, body, version, mode='new-release'):
+    if mode not in ('new-release', 'replacement-build-only'):
+        raise ValueError('Unknown release mode')
+    if mode == 'replacement-build-only' and tag != 'alpha-v0.1.0':
+        raise ValueError('Replacement build-only is bounded to alpha-v0.1.0')
     if not re.fullmatch(r'alpha-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag):
         raise ValueError('Tag must be alpha-vMAJOR.MINOR.PATCH (no leading zeroes)')
-    if tag != 'alpha-v' + version:
+    if mode == 'new-release' and tag != 'alpha-v' + version:
         raise ValueError('Tag must match committed desktop version; bump source metadata first')
     if not body.strip() or '\0' in body or len(body.encode('utf-8')) > 60000:
         raise ValueError('Changelog Markdown must be nonblank, NUL-free and <= 60000 UTF-8 bytes')
@@ -143,6 +147,78 @@ def publish(api, root, tag, sha, body):
     verify_remote_assets(local, api.request('GET', endpoint + '/assets?per_page=100'))
     verify_ref(api, tag, sha)
     print('Published and read back ' + tag + ' with exactly five verified assets')
+
+
+def replacement_snapshot(api, tag):
+    if tag != 'alpha-v0.1.0':
+        raise ValueError('Replacement build-only is bounded to alpha-v0.1.0')
+    ref = api.request('GET', '/git/ref/tags/' + tag)
+    release = api.request('GET', '/releases/tags/' + tag)
+    if (not ref or ref.get('object', {}).get('type') not in ('commit', 'tag')
+            or not re.fullmatch(r'[0-9a-f]{40}', ref['object'].get('sha', ''))
+            or not release or release.get('tag_name') != tag
+            or release.get('draft') is not False or release.get('prerelease') is not True):
+        raise ValueError('Replacement requires an existing tag and published prerelease')
+    assets = api.request('GET', f"/releases/{release['id']}/assets?per_page=100")
+    if (sorted(a['name'] for a in assets) != sorted(asset_names(tag))
+            or any(a.get('state') != 'uploaded' or a.get('size', 0) <= 0 for a in assets)):
+        raise ValueError('Existing release must contain exactly five uploaded assets')
+    return dict(ref=ref, release=release, assets=assets)
+
+
+def write_package_receipt(asset, directory, tag, sha, version, platform, arch):
+    # Called only after extraction, architecture, stamp and native PTY checks pass.
+    directory.mkdir(parents=True, exist_ok=True)
+    receipt = dict(asset=file_record(asset), tag=tag, source_sha=sha,
+                   desktop_version=version, platform=platform, arch=arch)
+    (directory / f'{platform}-{arch}.json').write_text(json.dumps(receipt), encoding='utf-8')
+
+
+def prepare_replacement(api, assets, proofs, output, tag, sha, body, version):
+    validate_inputs(tag, body, version, 'replacement-build-only')
+    if not re.fullmatch(r'[0-9a-f]{40}', sha) or sha == '0' * 40:
+        raise ValueError('Immutable 40-character source SHA required')
+    local = local_assets(assets, tag)
+    expected = {f'{p}-{a}.json' for p, a, _, _ in VARIANTS}
+    if {p.name for p in proofs.iterdir()} != expected:
+        raise ValueError('Complete native verification receipts required')
+    by_name = {a['name']: a for a in local}
+    for platform, arch, label, ext in VARIANTS:
+        path = proofs / f'{platform}-{arch}.json'
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('Receipt must be a regular file')
+        receipt = json.loads(path.read_text(encoding='utf-8'))
+        wanted = dict(asset=by_name[f'{label}_{arch}_{tag}.{ext}'], tag=tag,
+                      source_sha=sha, desktop_version=version, platform=platform, arch=arch)
+        if receipt != wanted:
+            raise ValueError('Native receipt does not match source/version/package bytes')
+    existing = replacement_snapshot(api, tag)
+    notes = (body + '\n\n## Replacement build provenance\n'
+             f'- Retained release/tag: `{tag}` (tag unchanged).\n'
+             f'- Build source commit: `{sha}`.\n'
+             f'- Internal desktop version: `{version}`.\n'
+             '- Asset filenames retain the original release label, not the internal version.\n')
+    manifest = dict(mode='replacement-build-only', tag=tag, source_sha=sha,
+                    desktop_version=version, assets=local, existing=existing,
+                    publication_performed=False)
+    output.mkdir(parents=True, exist_ok=False)
+    (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+    (output / 'notes.md').write_text(notes, encoding='utf-8', newline='')
+    (output / 'REVIEW.txt').write_text(
+        'BUILD ONLY: no release, tag, notes or old assets have been modified.\n'
+        'Before any separately authorized replacement: download all five new artifacts;\n'
+        'verify exact names, sizes and SHA-256 against manifest.json and inspect native job logs.\n'
+        'Download all five OLD assets and save old release notes/ref metadata outside GitHub;\n'
+        'verify backup byte counts and hashes, retain them through final public verification.\n'
+        'Re-read release ID, tag object, old asset IDs/digests and notes against this snapshot;\n'
+        'stop on drift. Do not move the tag. GitHub asset replacement is not atomic.\n'
+        'Use a separately reviewed replacement/rollback procedure; retain verified old bytes\n'
+        'for restoration if any upload fails. Never delete old assets before all five new\n'
+        'packages AND all five old backups are locally complete and verified.\n'
+        'Apply notes.md with the actual build SHA, then verify public downloaded bytes and\n'
+        'exact five-asset inventory. This artifact is NOT a backup or permission to publish.\n',
+        encoding='utf-8')
+    print('Replacement handoff verified; no GitHub writes performed')
 
 
 def binary_target(data):
@@ -271,7 +347,7 @@ def package(tag, platform, arch, temp):
         infos = list(unpacked.rglob('PackageInfo'))
         if len(infos) != 1:
             raise ValueError('Expected exactly one PKG component')
-        validate_pkg_info(infos[0].read_text(), tag)
+        validate_pkg_info(infos[0].read_text(), 'alpha-v' + json.loads((DESKTOP / 'package.json').read_text())['version'])
     elif platform == 'linux':
         data = artifact.read_bytes()
         if data[8:11] != b'AI\x02' or binary_target(data) != (platform, arch):
@@ -313,7 +389,7 @@ def package(tag, platform, arch, temp):
     if len(stamp_paths) != 1:
         raise ValueError('Expected one packaged install stamp')
     stamp = json.loads(stamp_paths[0].read_text())
-    if (stamp['commit'] != os.environ['GITHUB_SHA'] or stamp['version'] != tag.removeprefix('alpha-v')
+    if (stamp['commit'] != os.environ['GITHUB_SHA'] or stamp['version'] != json.loads((DESKTOP / 'package.json').read_text())['version']
             or stamp['channel'] != 'alpha' or stamp['repository'] != 'AetherMesh-AI/Eidolon'):
         raise ValueError('Packaged install stamp must match source SHA/version/channel/repository')
     if os.environ.get('GITHUB_ACTIONS') == 'true' and stamp['dirty'] is not False:
@@ -326,16 +402,30 @@ def package(tag, platform, arch, temp):
     packaged_pty_smoke(executables[0], pty_roots[0], temp)
     assets = temp / 'assets'; assets.mkdir()
     artifact.rename(assets / name)
+    write_package_receipt(assets / name, temp / 'proofs', tag, os.environ['GITHUB_SHA'],
+                          json.loads((DESKTOP / 'package.json').read_text())['version'], platform, arch)
     print(json.dumps(file_record(assets / name)))
 
 
 def main():
     tag = os.environ['RELEASE_TAG']; body = os.environ['RELEASE_CHANGELOG']
     version = json.loads((DESKTOP / 'package.json').read_text())['version']
-    validate_inputs(tag, body, version)
+    mode = os.environ.get('RELEASE_MODE', 'new-release')
+    validate_inputs(tag, body, version, mode)
     command = sys.argv[1]
+    if mode == 'replacement-build-only' and command == 'publish':
+        raise ValueError('Replacement is build-only; publication requires separate review')
     if command == 'preflight':
-        absent(API(), tag)
+        if mode == 'replacement-build-only':
+            replacement_snapshot(API(), tag)
+        else:
+            absent(API(), tag)
+    elif command == 'prepare-replacement':
+        if mode != 'replacement-build-only':
+            raise ValueError('Explicit replacement-build-only mode required')
+        prepare_replacement(API(), Path(os.environ['RELEASE_ASSETS']),
+                            Path(os.environ['RELEASE_PROOFS']), Path(os.environ['RELEASE_HANDOFF']),
+                            tag, os.environ['GITHUB_SHA'], body, version)
     elif command == 'package':
         package(tag, os.environ['TARGET_PLATFORM'], os.environ['TARGET_ARCH'], Path(os.environ['RUNNER_TEMP']) / 'eidolon-release')
     elif command == 'publish':

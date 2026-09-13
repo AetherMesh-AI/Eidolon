@@ -72,6 +72,97 @@ class SmokeTests(unittest.TestCase):
                         self.assertEqual(state['waitingAt'], 'spawned')
 
 
+class ReplacementTests(unittest.TestCase):
+    def test_explicit_build_only_mode_never_reaches_publisher(self):
+        version = json.loads((r.DESKTOP / 'package.json').read_text())['version']
+        env = {'RELEASE_TAG': 'alpha-v0.1.0', 'RELEASE_CHANGELOG': '# Notes',
+               'RELEASE_MODE': 'replacement-build-only'}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(r.sys, 'argv', ['manual_release.py', 'publish']), patch.object(r, 'API') as api:
+                with self.assertRaisesRegex(ValueError, 'build-only'):
+                    r.main()
+                api.assert_not_called()
+        # Omitted mode still runs the original absence gate, never replacement lookup.
+        with patch.dict(os.environ, {'RELEASE_TAG': 'alpha-v' + version,
+                                    'RELEASE_CHANGELOG': '# Notes'}, clear=True):
+            with patch.object(r.sys, 'argv', ['manual_release.py', 'preflight']), patch.object(r, 'API'):
+                with patch.object(r, 'absent', side_effect=ValueError('already exists')) as absent:
+                    with patch.object(r, 'replacement_snapshot') as replacement:
+                        with self.assertRaisesRegex(ValueError, 'already exists'):
+                            r.main()
+                        absent.assert_called_once()
+                        replacement.assert_not_called()
+        with patch.dict(os.environ, env, clear=True), patch.object(r, 'API'):
+            with patch.object(r.sys, 'argv', ['manual_release.py', 'preflight']):
+                with patch.object(r, 'replacement_snapshot') as snapshot, patch.object(r, 'absent') as absent:
+                    r.main()
+                    snapshot.assert_called_once()
+                    absent.assert_not_called()
+        self.assertEqual(r.validate_inputs('alpha-v0.1.0', '# Notes', version, 'replacement-build-only'), '# Notes')
+        for mode, tag in [('new-release', 'alpha-v0.1.0'), ('replace', 'alpha-v0.1.0'),
+                          ('replacement-build-only', 'alpha-v0.2.0')]:
+            with self.subTest(mode=mode, tag=tag), self.assertRaises(ValueError):
+                r.validate_inputs(tag, '# Notes', '0.1.1', mode)
+
+
+class ReplacementHandoffTests(unittest.TestCase):
+    def test_complete_verified_matrix_required_before_read_only_handoff(self):
+        tag, sha, version = 'alpha-v0.1.0', 'a' * 40, '0.1.1'
+        class ExistingAPI:
+            def __init__(self):
+                self.calls = []
+            def request(self, method, path, **kwargs):
+                self.calls.append((method, path))
+                if method != 'GET':
+                    raise AssertionError('Replacement must never mutate GitHub')
+                if path.startswith('/git/ref/'):
+                    return {'object': {'sha': 'b' * 40, 'type': 'commit'}}
+                if path.startswith('/releases/tags/'):
+                    return dict(id=7, tag_name=tag, draft=False, prerelease=True, body='old notes')
+                if path.startswith('/releases/7/assets'):
+                    return [dict(id=i, name=n, size=12, state='uploaded', digest='sha256:' + 'c' * 64)
+                            for i, n in enumerate(r.asset_names(tag), 1)]
+                raise AssertionError(path)
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td); assets = base / 'assets'; assets.mkdir()
+            proofs = base / 'proofs'; proofs.mkdir()
+            output = base / 'handoff'
+            for platform, arch, label, ext in r.VARIANTS:
+                asset = assets / f'{label}_{arch}_{tag}.{ext}'
+                asset.write_bytes(b'offline fixture, not an installer')
+                r.write_package_receipt(asset, proofs, tag, sha, version, platform, arch)
+            api = ExistingAPI()
+            r.prepare_replacement(api, assets, proofs, output, tag, sha, '# New notes', version)
+            manifest = json.loads((output / 'manifest.json').read_text())
+            self.assertEqual(manifest['source_sha'], sha)
+            self.assertEqual(manifest['desktop_version'], version)
+            self.assertEqual(manifest['existing']['ref']['object']['sha'], 'b' * 40)
+            self.assertEqual(manifest['assets'], r.local_assets(assets, tag))
+            notes = (output / 'notes.md').read_text()
+            for value in [sha, version, tag, 'unchanged']:
+                self.assertIn(value, notes)
+            self.assertTrue(all(m == 'GET' for m, _ in api.calls))
+            # Missing, corrupted and wrong-source packages must not produce a handoff.
+            receipt = next(proofs.iterdir()); original = receipt.read_text()
+            for mutation in ['missing', 'source', 'digest']:
+                if mutation == 'missing':
+                    receipt.unlink()
+                else:
+                    record = json.loads(original)
+                    if mutation == 'source': record['source_sha'] = 'd' * 40
+                    else: record['asset']['digest'] = 'sha256:' + 'e' * 64
+                    receipt.write_text(json.dumps(record))
+                target = base / mutation
+                with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                    r.prepare_replacement(api, assets, proofs, target, tag, sha, '# Notes', version)
+                self.assertFalse(target.exists())
+                receipt.write_text(original)
+            (assets / r.asset_names(tag)[0]).unlink()
+            with self.assertRaises(ValueError):
+                r.prepare_replacement(api, assets, proofs, base / 'partial', tag, sha, '# Notes', version)
+            self.assertFalse((base / 'partial').exists())
+
+
 class PolicyTests(unittest.TestCase):
     def test_version_and_changelog_are_data(self):
         body = '# Changes\n$(touch /tmp/never)\n`whoami`\nEOF\n${{ secrets.TOKEN }}'
@@ -147,7 +238,8 @@ class PackagingCommandTests(unittest.TestCase):
                 self.assertEqual(len(notes), 1)
                 self.assertEqual(notes[0].read_bytes(), body.encode('utf-8'))
                 self.assertFalse(notes[0].is_relative_to(r.ROOT))
-            env = {'RELEASE_TAG': 'alpha-v0.1.0', 'RELEASE_CHANGELOG': body,
+            version = json.loads((r.DESKTOP / 'package.json').read_text())['version']
+            env = {'RELEASE_TAG': 'alpha-v' + version, 'RELEASE_CHANGELOG': body,
                    'RUNNER_TEMP': td, 'RELEASE_ASSETS': td, 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env, clear=True), patch.object(r.sys, 'argv', ['manual_release.py', 'publish']):
                 with patch.object(r, 'API'), patch.object(r, 'publish', side_effect=inspect_notes) as publish:
