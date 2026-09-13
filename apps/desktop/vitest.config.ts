@@ -16,7 +16,7 @@ const reactUi: TestProjectConfiguration = {
   }
 }
 
-const electronNative: TestProjectConfiguration = {
+export const electronNative: TestProjectConfiguration = {
   test: {
     name: 'electron',
     environment: 'node',

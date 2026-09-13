@@ -3,7 +3,10 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
 
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX installer fixture; Windows requires native coverage')
 def test_archive_update_callers(tmp_path):
     root = Path(__file__).resolve().parents[1]
     harness = root / "tests/fixtures/desktop_archive_update.cjs"

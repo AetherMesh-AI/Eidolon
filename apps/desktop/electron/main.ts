@@ -80,7 +80,8 @@ import {
   resolveLinuxPasswordStore
 } from './bootstrap-platform'
 import { decideBootstrapRepair } from './bootstrap-repair-guard'
-import { checkArchiveUpdate, prepareArchiveUpdateWithConsent, readPreparedSource, preparedSourceBackend } from './archive-update-source'
+import { readPreparedSource } from './archive-update-source'
+import { createArchiveUpdateCaller, selectSourceBackend, createSourcePythonBackend } from './archive-update-caller'
 import { runBootstrap } from './bootstrap-runner'
 import {
   BROWSER_WINDOW_HEIGHT,
@@ -2600,28 +2601,6 @@ function isHermesSourceRoot(root) {
   return directoryExists(root) && fileExists(path.join(root, 'hermes_cli', 'main.py'))
 }
 
-function findPythonForRoot(root) {
-  const override = process.env.HERMES_DESKTOP_PYTHON
-
-  if (override && fileExists(override)) {
-    return override
-  }
-
-  const relativePaths = IS_WINDOWS
-    ? [path.join('.venv', 'Scripts', 'python.exe'), path.join('venv', 'Scripts', 'python.exe')]
-    : [path.join('.venv', 'bin', 'python'), path.join('venv', 'bin', 'python')]
-
-  for (const relativePath of relativePaths) {
-    const candidate = path.join(root, relativePath)
-
-    if (fileExists(candidate)) {
-      return candidate
-    }
-  }
-
-  return findSystemPython()
-}
-
 function findSystemPython() {
   if (!IS_WINDOWS) {
     // POSIX systems: PATH lookup is safe.
@@ -2787,35 +2766,6 @@ function findGitBash() {
 
 function getVenvPython(venvRoot) {
   return path.join(venvRoot, IS_WINDOWS ? path.join('Scripts', 'python.exe') : path.join('bin', 'python'))
-}
-
-// Map a selected interpreter back to the venv that OWNS it (the directory
-// above bin/ or Scripts/), but only when that venv lives inside `root`.
-// Returns null for system pythons — they own no site-packages we should mount.
-//
-// This exists because findPythonForRoot() probes `.venv` before `venv`, and a
-// checkout can legitimately have BOTH (dev tooling venv + the CLI install
-// venv, possibly on different Python versions). The interpreter and the
-// site-packages placed on PYTHONPATH must come from the SAME venv: pairing a
-// .venv 3.12 python with venv/lib/python3.11/site-packages makes the backend
-// die on its first native import (pydantic_core) before the gateway binds —
-// the renderer then reports "Gateway offline" on every profile.
-function venvRootForPython(python: string, root: string) {
-  const parent = path.dirname(python)
-  const binName = path.basename(parent).toLowerCase()
-
-  if (binName !== 'bin' && binName !== 'scripts') {
-    return null
-  }
-
-  const candidate = path.dirname(parent)
-  const relative = path.relative(root, candidate)
-
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    return null
-  }
-
-  return candidate
 }
 
 // Windows console-window flashes are governed by the *parent's* console, not by
@@ -3084,7 +3034,7 @@ async function checkUpdates() {
 
   if (!directoryExists(gitDir)) {
     if (IS_PACKAGED && !process.env.HERMES_DESKTOP_HERMES_ROOT) {
-      return checkArchiveUpdate({ runGit, currentSha: INSTALL_STAMP?.commit, archiveRoot: updateRoot })
+      return archiveUpdateCaller().check(updateRoot, INSTALL_STAMP?.commit)
     }
     return {
       supported: false,
@@ -3812,26 +3762,16 @@ async function releaseBackendLock(updateRoot, tag) {
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
-async function prepareArchiveUpdateSource() {
-  return prepareArchiveUpdateWithConsent({
-    hermesHome: HERMES_HOME,
-    runGit,
-    confirm: async () => {
-      const answer = await dialog.showMessageBox({
-        type: 'question', buttons: ['Cancel', 'Prepare source update'], defaultId: 0, cancelId: 0,
-        title: 'Prepare Eidolon Git updates',
-        message: 'Convert this release installation to an updatable Eidolon source runtime?',
-        detail: 'This downloads a complete Eidolon Git checkout and runs the existing installer prerequisite, Python environment and dependency stages. Missing system tools may be installed. Your conversations, settings and current source remain unchanged if preparation fails. Native desktop replacement still uses the platform update helper.'
-      })
-      return answer.response === 1
-    },
-    prepare: root => runBootstrap({
-      installStamp: null, activeRoot: root, sourceRepoRoot: root, hermesHome: HERMES_HOME,
-      stageNames: IS_WINDOWS ? ['uv', 'python', 'venv', 'dependencies'] : ['prerequisites', 'venv', 'python-deps'],
-      onEvent: event => emitUpdateProgress({ stage: 'preparing', message: event.line || event.error || event.type }),
-      writeMarker: () => {}
-    })
+function archiveUpdateCaller() {
+  return createArchiveUpdateCaller({
+    hermesHome: HERMES_HOME, runGit,
+    showMessageBox: options => dialog.showMessageBox(options),
+    emitProgress: emitUpdateProgress
   })
+}
+
+async function prepareArchiveUpdateSource() {
+  return archiveUpdateCaller().prepare()
 }
 
 async function applyUpdates(opts: { stopSafeBlockers?: boolean } = {}) {
@@ -4814,35 +4754,7 @@ function writeDefaultProjectDir(dir) {
 }
 
 function createPythonBackend(root, label, backendArgs, options: any = {}) {
-  const python = findPythonForRoot(root)
-
-  if (!python) {
-    return null
-  }
-
-  // The venv whose interpreter we selected is the venv whose site-packages
-  // belong on PYTHONPATH — findPythonForRoot may have picked `.venv` over
-  // `venv`, and mixing the two crashes the backend on its first native
-  // import (see venvRootForPython). Fall back to root/venv only for a
-  // system python, where the historical layout is the best guess.
-  const venvRoot = venvRootForPython(python, root) ?? path.join(root, 'venv')
-  const venvPython = getVenvPython(venvRoot)
-  const command = IS_WINDOWS && fileExists(venvPython) ? venvPython : python
-
-  return {
-    kind: 'python',
-    label,
-    command,
-    args: ['-m', 'hermes_cli.main', ...backendArgs],
-    env: buildDesktopBackendEnv({
-      hermesHome: HERMES_HOME,
-      pythonPathEntries: [root, ...getVenvSitePackagesEntries(venvRoot)],
-      venvRoot
-    }),
-    root,
-    bootstrap: Boolean(options.bootstrap),
-    shell: false
-  }
+  return createSourcePythonBackend(root, label, backendArgs, { hermesHome: HERMES_HOME, findSystemPython }, options)
 }
 
 // createActiveBackend — build a backend pointing at ACTIVE_HERMES_ROOT, the
@@ -4870,35 +4782,12 @@ function createActiveBackend(backendArgs) {
 }
 
 function resolveHermesBackend(backendArgs) {
-  // 1. Explicit override -- HERMES_DESKTOP_HERMES_ROOT points at a developer
-  //    checkout. Honour it as-is (no bootstrap; the user is driving).
-  const overrideRoot = process.env.HERMES_DESKTOP_HERMES_ROOT && path.resolve(process.env.HERMES_DESKTOP_HERMES_ROOT)
-
-  if (overrideRoot && isHermesSourceRoot(overrideRoot)) {
-    const backend = createPythonBackend(overrideRoot, `Hermes source at ${overrideRoot}`, backendArgs)
-
-    if (backend) {
-      return backend
-    }
-  }
-
-  // 2. Development source -- when running `npm run dev` from a checkout, the
-  //    cloned repo at SOURCE_REPO_ROOT takes precedence over ACTIVE and any
-  //    installed `hermes` on PATH so local Python edits are actually exercised.
-  //    (In dev with no checkout, SOURCE_REPO_ROOT won't pass isHermesSourceRoot.)
-  if (!IS_PACKAGED && isHermesSourceRoot(SOURCE_REPO_ROOT)) {
-    const backend = createPythonBackend(SOURCE_REPO_ROOT, `Hermes source at ${SOURCE_REPO_ROOT}`, backendArgs)
-
-    if (backend) {
-      return backend
-    }
-  }
-
-  if (IS_PACKAGED) {
-    const backend = preparedSourceBackend(HERMES_HOME, root =>
-      isHermesSourceRoot(root) ? createPythonBackend(root, `Eidolon source at ${root}`, backendArgs) : null)
-    if (backend) return backend
-  }
+  const sourceBackend = selectSourceBackend({
+    overrideRoot: process.env.HERMES_DESKTOP_HERMES_ROOT,
+    packaged: IS_PACKAGED, sourceRepoRoot: SOURCE_REPO_ROOT, hermesHome: HERMES_HOME,
+    backendArgs, findSystemPython
+  })
+  if (sourceBackend) return sourceBackend
 
   // 3. ACTIVE_HERMES_ROOT — the canonical install at
   //    %LOCALAPPDATA%\\hermes\\hermes-agent (Windows) or ~/.hermes/hermes-agent.

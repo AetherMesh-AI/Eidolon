@@ -64,17 +64,25 @@ export async function prepareArchiveUpdate({ hermesHome, runGit, prepare }: {
     if (result.code !== 0) throw new Error(result.stderr || `git ${args[0]} failed`)
     return result.stdout.trim()
   }
-  // No depth/filter: deterministic 0.1.x versions need complete first-parent history.
-  await git(['clone', '--branch', 'main', '--single-branch', '--', ORIGIN, '.'])
-  if (await git(['config', '--get', 'remote.origin.url']) !== ORIGIN ||
-      await git(['rev-parse', '--is-shallow-repository']) !== 'false' ||
-      !SHA.test(await git(['rev-parse', 'HEAD']))) throw new Error('Invalid Eidolon checkout')
-  const result = await prepare(root)
-  if (!result.ok) throw new Error(result.error || 'Source runtime preparation failed')
-  const python = process.platform === 'win32' ? 'venv/Scripts/python.exe' : 'venv/bin/python'
-  if (!fs.existsSync(path.join(root, python))) throw new Error('Prepared source has no Python runtime')
   const temporary = path.join(parent, `active-${path.basename(root)}.json`)
-  fs.writeFileSync(temporary, JSON.stringify({ root }))
-  fs.renameSync(temporary, path.join(parent, 'active.json'))
+  try {
+    // No depth/filter: deterministic 0.1.x versions need complete first-parent history.
+    await git(['clone', '--branch', 'main', '--single-branch', '--', ORIGIN, '.'])
+    if (await git(['config', '--get', 'remote.origin.url']) !== ORIGIN ||
+        await git(['rev-parse', '--is-shallow-repository']) !== 'false' ||
+        !SHA.test(await git(['rev-parse', 'HEAD']))) throw new Error('Invalid Eidolon checkout')
+    const result = await prepare(root)
+    if (!result.ok) throw new Error(result.error || 'Source runtime preparation failed')
+    const python = process.platform === 'win32' ? 'venv/Scripts/python.exe' : 'venv/bin/python'
+    if (!fs.existsSync(path.join(root, python))) throw new Error('Prepared source has no Python runtime')
+    fs.writeFileSync(temporary, JSON.stringify({ root }))
+    fs.renameSync(temporary, path.join(parent, 'active.json'))
+  } catch (error) {
+    // Only this unpublished attempt belongs to this failure path. Never sweep
+    // sibling checkouts or mask the preparation/publication error with cleanup.
+    try { fs.rmSync(temporary, { force: true }) } catch {}
+    try { fs.rmSync(root, { recursive: true, force: true }) } catch {}
+    throw error
+  }
   return root
 }

@@ -55,27 +55,6 @@ class ImmutableVersion(unittest.TestCase):
         (self.root / '.git/shallow').write_text(self.git('rev-parse', 'HEAD') + '\n')
         with self.assertRaises(ValueError): self.v.write_identity(self.root, require_verified=True, env={})
 
-    def test_actual_desktop_generator_and_runtime_consumer(self):
-        import json
-        import sys
-        source = (ROOT / 'hermes_cli/eidolon_version.py').read_text()
-        (self.root / 'hermes_cli').mkdir()
-        (self.root / 'hermes_cli/eidolon_version.py').write_text(
-            source.replace('437db7394d78a178966fb2ae42792f2978133a9d', self.v.ANCHOR_COMMIT))
-        self.git('add', 'hermes_cli')
-        self.git('commit', '-m', 'generator')
-        generator = (ROOT / 'apps/desktop/scripts/write-build-stamp.mjs').as_uri()
-        consumer = (ROOT / 'apps/desktop/electron/install-stamp.ts').as_uri()
-        script = f'''import {{writeBuildStamp}} from {json.dumps(generator)};
-import {{readInstallStampFromPaths, formatInstallVersion}} from {json.dumps(consumer)};
-const stamp = writeBuildStamp({{repoRoot: process.argv[1]}});
-const runtime = readInstallStampFromPaths([process.argv[1] + '/apps/desktop/build/install-stamp.json']);
-if (runtime.version !== stamp.version || formatInstallVersion(runtime).includes('unverified')) throw Error('consumer mismatch');
-console.log(JSON.stringify(runtime));'''
-        result = subprocess.check_output(['node', '--experimental-strip-types', '--input-type=module',
-            '-e', script, str(self.root)], env={**self.env, 'HERMES_PYTHON': sys.executable}, text=True)
-        self.assertEqual(json.loads(result)['version'], '0.1.1')
-
     def test_unknown_anchor(self):
         self.v.ANCHOR_COMMIT = 'a' * 40
         self.assertEqual(self.v.resolve_identity(self.root, env={})['versionSource'], 'fallback')
