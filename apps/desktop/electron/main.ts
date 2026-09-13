@@ -80,6 +80,7 @@ import {
   resolveLinuxPasswordStore
 } from './bootstrap-platform'
 import { decideBootstrapRepair } from './bootstrap-repair-guard'
+import { checkArchiveUpdate, prepareArchiveUpdateWithConsent, readPreparedSource, preparedSourceBackend } from './archive-update-source'
 import { runBootstrap } from './bootstrap-runner'
 import {
   BROWSER_WINDOW_HEIGHT,
@@ -3009,6 +3010,7 @@ function resolveUpdateRoot() {
   const candidates = [
     process.env.HERMES_DESKTOP_HERMES_ROOT && path.resolve(process.env.HERMES_DESKTOP_HERMES_ROOT),
     !IS_PACKAGED && isHermesSourceRoot(SOURCE_REPO_ROOT) ? SOURCE_REPO_ROOT : null,
+    IS_PACKAGED ? readPreparedSource(HERMES_HOME) : null,
     isHermesSourceRoot(ACTIVE_HERMES_ROOT) ? ACTIVE_HERMES_ROOT : null
   ].filter(Boolean)
 
@@ -3081,6 +3083,9 @@ async function checkUpdates() {
   const gitDir = path.join(updateRoot, '.git')
 
   if (!directoryExists(gitDir)) {
+    if (IS_PACKAGED && !process.env.HERMES_DESKTOP_HERMES_ROOT) {
+      return checkArchiveUpdate({ runGit, currentSha: INSTALL_STAMP?.commit, archiveRoot: updateRoot })
+    }
     return {
       supported: false,
       reason: 'not-a-git-checkout',
@@ -3807,6 +3812,28 @@ async function releaseBackendLock(updateRoot, tag) {
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
+async function prepareArchiveUpdateSource() {
+  return prepareArchiveUpdateWithConsent({
+    hermesHome: HERMES_HOME,
+    runGit,
+    confirm: async () => {
+      const answer = await dialog.showMessageBox({
+        type: 'question', buttons: ['Cancel', 'Prepare source update'], defaultId: 0, cancelId: 0,
+        title: 'Prepare Eidolon Git updates',
+        message: 'Convert this release installation to an updatable Eidolon source runtime?',
+        detail: 'This downloads a complete Eidolon Git checkout and runs the existing installer prerequisite, Python environment and dependency stages. Missing system tools may be installed. Your conversations, settings and current source remain unchanged if preparation fails. Native desktop replacement still uses the platform update helper.'
+      })
+      return answer.response === 1
+    },
+    prepare: root => runBootstrap({
+      installStamp: null, activeRoot: root, sourceRepoRoot: root, hermesHome: HERMES_HOME,
+      stageNames: IS_WINDOWS ? ['uv', 'python', 'venv', 'dependencies'] : ['prerequisites', 'venv', 'python-deps'],
+      onEvent: event => emitUpdateProgress({ stage: 'preparing', message: event.line || event.error || event.type }),
+      writeMarker: () => {}
+    })
+  })
+}
+
 async function applyUpdates(opts: { stopSafeBlockers?: boolean } = {}) {
   if (updateInFlight) {
     throw new Error('An update is already in progress.')
@@ -3815,7 +3842,14 @@ async function applyUpdates(opts: { stopSafeBlockers?: boolean } = {}) {
   updateInFlight = true
 
   try {
-    const updater = resolveUpdaterBinary()
+    const archiveRoot = resolveUpdateRoot()
+    if (IS_PACKAGED && !process.env.HERMES_DESKTOP_HERMES_ROOT && !directoryExists(path.join(archiveRoot, '.git'))) {
+      const prepared = await prepareArchiveUpdateSource()
+      if (!prepared.ok) return prepared
+    }
+    // A staged installer may target its original install directory. Managed
+    // source uses the upstream repository handoff with an explicit repo root.
+    const updater = IS_PACKAGED && !process.env.HERMES_DESKTOP_HERMES_ROOT && readPreparedSource(HERMES_HOME) ? null : resolveUpdaterBinary()
 
     if (!updater && !IS_WINDOWS) {
       // macOS/Linux: hand off to the repo-owned posix script — same shape as
@@ -4858,6 +4892,12 @@ function resolveHermesBackend(backendArgs) {
     if (backend) {
       return backend
     }
+  }
+
+  if (IS_PACKAGED) {
+    const backend = preparedSourceBackend(HERMES_HOME, root =>
+      isHermesSourceRoot(root) ? createPythonBackend(root, `Eidolon source at ${root}`, backendArgs) : null)
+    if (backend) return backend
   }
 
   // 3. ACTIVE_HERMES_ROOT — the canonical install at

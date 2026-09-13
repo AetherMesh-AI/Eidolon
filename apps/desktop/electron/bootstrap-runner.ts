@@ -783,7 +783,9 @@ async function runStage({
         '--json',
         ...buildPosixPinArgs({ installStamp, activeRoot, hermesHome, pinCommit })
       ]
-    : ['-Stage', stage.name, '-NonInteractive', '-Json', ...buildPinArgs(installStamp, { pinCommit })]
+    : ['-Stage', stage.name, '-NonInteractive', '-Json',
+        '-InstallDir', activeRoot, '-HermesHome', hermesHome,
+        ...buildPinArgs(installStamp, { pinCommit })]
 
   const result = await (isPosix ? spawnBash : spawnPowerShell)(scriptPath, args, {
     emit,
@@ -958,7 +960,14 @@ async function runBootstrap(opts) {
     //    invoked -- install.ps1's own -NonInteractive handler in those stages
     //    emits skipped=true. We trust the protocol rather than filtering
     //    client-side.
+    // A caller preparing an already-cloned source runtime can omit unrelated
+    // user-data, repository, browser and desktop stages. Fail closed on drift.
+    const requestedStages = opts.stageNames as string[] | undefined
+    if (requestedStages && requestedStages.some(name => !manifest.stages.some(stage => stage.name === name))) {
+      throw new Error('Installer manifest is missing a required source preparation stage')
+    }
     for (const stage of manifest.stages) {
+      if (requestedStages && !requestedStages.includes(stage.name)) continue
       if (abortSignal && abortSignal.aborted) {
         emit({ type: 'failed', error: 'bootstrap cancelled by user' })
 
