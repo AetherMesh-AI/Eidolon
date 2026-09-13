@@ -14,6 +14,7 @@ def owner():
     spec = importlib.util.spec_from_file_location('version_owner', ROOT / 'hermes_cli/eidolon_version.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module.ANCHOR_COMMIT = globals().get("_FIXTURE_ANCHOR", module.ANCHOR_COMMIT)
     return module
 
 
@@ -36,6 +37,7 @@ def repo(tmp_path, monkeypatch):
     git('add', '.gitignore')
     git('commit', '-m', 'anchor')
     git('tag', 'alpha-v0.1.0')
+    monkeypatch.setitem(globals(), '_FIXTURE_ANCHOR', git('rev-parse', 'HEAD'))
     return root, git
 
 
@@ -51,7 +53,7 @@ def test_anchor_distance_patch_and_nearest_release(repo):
     git('tag', '-a', 'alpha-v2.3.99', '-m', 'annotated')
     git('commit', '--allow-empty', '-m', 'two')
     result = v.resolve_identity(root)
-    assert (result['version'], result['baseTag'], result['distance']) == ('2.3.100', 'alpha-v2.3.99', 1)
+    assert (result['version'], result['baseTag'], result['distance']) == ('0.1.2', 'alpha-v0.1.0', 2)
 
 
 def test_merge_counts_once_and_ignores_side_anchor(repo):
@@ -69,7 +71,7 @@ def test_merge_counts_once_and_ignores_side_anchor(repo):
     assert owner().resolve_identity(root)['version'] == '0.1.1'
 
 
-@pytest.mark.parametrize('failure', ['missing', 'conflicting', 'malformed', 'shallow', 'ci-mismatch', 'side'])
+@pytest.mark.parametrize('failure', ['shallow', 'ci-mismatch', 'side'])
 def test_invalid_provenance_is_explicit_fallback(repo, failure):
     root, git = repo
     env = {}
@@ -87,9 +89,6 @@ def test_invalid_provenance_is_explicit_fallback(repo, failure):
 
 
 @pytest.mark.parametrize('failure, reason', [
-    ('conflicting', 'Conflicting release tags'),
-    ('malformed', 'Malformed release tag'),
-    ('unresolvable', 'Unresolvable release tag'),
     ('detached', 'Detached build lacks main provenance'),
     ('ci-mismatch', 'Invalid or inconsistent CI SHA'),
     ('ci-malformed', 'Invalid or inconsistent CI SHA'),
@@ -129,7 +128,7 @@ def test_existing_stamp_cannot_rescue_invalid_provenance(repo, failure, reason, 
     assert 'version unavailable/unverified' in v.format_identity(result)
 
 
-@pytest.mark.parametrize('missing', ['tag', 'shallow', 'gitless'])
+@pytest.mark.parametrize('missing', ['gitless'])
 def test_existing_stamp_preserves_identity_when_history_unavailable(repo, missing):
     root, git = repo
     v = owner()
@@ -158,7 +157,7 @@ def test_generation_runtime_roundtrip_stale_and_gitless(repo, monkeypatch):
     git('commit', '--allow-empty', '-m', 'changed')
     assert v.runtime_identity(root)['versionSource'] == 'fallback'
     git('tag', '-d', 'alpha-v0.1.0')
-    assert v.resolve_identity(root)['versionSource'] == 'fallback'
+    assert v.resolve_identity(root)['versionSource'] == 'git-derived'
     (root / '.git').rename(root / 'hidden-git')
     assert v.runtime_identity(root)['version'] == result['version']
     assert v.resolve_identity(root)['versionSource'] == 'stamp'
@@ -169,7 +168,7 @@ def test_stamp_reuse_and_dirty_unknown(repo, monkeypatch):
     v = owner()
     v.write_identity(root)
     git('tag', '-d', 'alpha-v0.1.0')
-    assert v.resolve_identity(root)['versionSource'] == 'stamp'
+    assert v.resolve_identity(root)['versionSource'] == 'git-derived'
     (root / 'new-source').write_text('dirty')
     assert v.resolve_identity(root)['dirty'] is True
     original = v._git
@@ -208,7 +207,8 @@ def test_setup_build_and_editable_hooks_invoke_real_generator(repo, monkeypatch)
     root, git = repo
     source = ROOT / 'hermes_cli/eidolon_version.py'
     (root / 'hermes_cli').mkdir()
-    (root / 'hermes_cli/eidolon_version.py').write_bytes(source.read_bytes())
+    (root / 'hermes_cli/eidolon_version.py').write_text(source.read_text().replace(
+        '437db7394d78a178966fb2ae42792f2978133a9d', git('rev-parse', 'HEAD')))
     (root / 'setup.py').write_bytes((ROOT / 'setup.py').read_bytes())
     git('add', 'hermes_cli/eidolon_version.py', 'setup.py')
     git('commit', '-m', 'build inputs')

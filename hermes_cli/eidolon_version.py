@@ -18,6 +18,8 @@ CHANNEL = 'alpha'
 REPOSITORY = 'AetherMesh-AI/Eidolon'
 UPDATE_BRANCH = 'main'
 SCHEMA_VERSION = 1
+# Immutable original 0.1.0 release; tags never participate in derivation.
+ANCHOR_COMMIT = '437db7394d78a178966fb2ae42792f2978133a9d'
 STAMP_PATH = Path('hermes_cli/_build_identity.json')
 _NUMBER = r'(0|[1-9][0-9]*)'
 _TAG = re.compile(rf'alpha-v{_NUMBER}\.{_NUMBER}\.{_NUMBER}')
@@ -95,8 +97,8 @@ def validate_identity(value):
     tag = value.get('baseTag')
     match = _TAG.fullmatch(tag) if isinstance(tag, str) else None
     if not match or type(distance) is not int or distance < 0: return None
-    major, minor, patch = map(int, match.groups())
-    if value.get('version') != f'{major}.{minor}.{patch + distance}': return None
+    if tag != 'alpha-v0.1.0' or value['baseCommit'] != ANCHOR_COMMIT: return None
+    if value.get('version') != f'0.1.{distance}': return None
     if (distance == 0) != (value['commit'] == value['baseCommit']): return None
     return dict(value)
 
@@ -133,29 +135,15 @@ def _derive(root, head, branch):
             chain = _git(root, 'rev-list', '--first-parent', ref)
             if chain is not None and head in chain.splitlines(): eligible = True
         if not eligible: raise ValueError('Detached build lacks main provenance')
-    chain = _git(root, 'rev-list', '--first-parent', head)
-    tags = _git(root, 'tag', '--list', 'alpha-v*')
-    if chain is None or tags is None: raise _UnavailableHistory('Cannot read local release history')
-    positions = {commit: index for index, commit in enumerate(chain.splitlines())}
-    anchors = {}
-    for tag in tags.splitlines():
-        match = _TAG.fullmatch(tag)
-        if not match: raise ValueError('Malformed release tag: ' + tag)
-        commit = _git(root, 'rev-parse', '--verify', f'refs/tags/{tag}^{{commit}}')
-        if not valid_sha(commit): raise ValueError('Unresolvable release tag: ' + tag)
-        if commit in positions:
-            anchors.setdefault(positions[commit], []).append((tag, commit, match.groups()))
-    if not anchors: raise _UnavailableHistory('No release tag on main first-parent history')
-    distance = min(anchors)
-    if len(anchors[distance]) != 1: raise ValueError('Conflicting release tags at nearest anchor')
-    # Reject locally visible contradictions before allowing missing-history reuse.
     if _git(root, 'rev-parse', '--is-shallow-repository') != 'false':
-        raise _UnavailableHistory('Missing or shallow Git history')
-    tag, commit, numbers = anchors[distance][0]
-    major, minor, patch = map(int, numbers)
-    return dict(version=f'{major}.{minor}.{patch + distance}', baseTag=tag,
-                baseCommit=commit, distance=distance, versionSource='git-derived',
-                versionReason='Complete local main first-parent history')
+        raise ValueError('Missing or shallow Git history')
+    chain = _git(root, 'rev-list', '--first-parent', head)
+    if chain is None or ANCHOR_COMMIT not in chain.splitlines():
+        raise ValueError('Fixed version anchor absent from main first-parent history')
+    distance = chain.splitlines().index(ANCHOR_COMMIT)
+    return dict(version=f'0.1.{distance}', baseTag='alpha-v0.1.0',
+                baseCommit=ANCHOR_COMMIT, distance=distance, versionSource='git-derived',
+                versionReason='Complete local main first-parent history from immutable anchor')
 
 
 def resolve_identity(root=None, env=None):

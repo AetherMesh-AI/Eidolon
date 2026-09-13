@@ -147,13 +147,30 @@ def _record_update_step(step: str, ok: bool, detail: str = "") -> None:
         record_step(step, ok, detail)
 
 
+# A fetch whose transport dead-stalls (HTTP/2 to GitHub on some networks, a black-holed proxy)
+# otherwise leaves `hermes update` on "Fetching updates..." forever (#93759, #95777). Five
+# minutes is generous for a scoped single-branch fetch and still ends in a real error.
+NETWORK_GIT_TIMEOUT_SECONDS = 300
+
+
 def _git_run(git_cmd, args, cwd=None, *, check=False, network=False):
     """Run git capturing utf-8 text (default cwd: checkout); ``network=True`` disables the
-    terminal prompt so an HTTP 401 fails fast instead of hanging."""
-    return subprocess.run(
-        git_cmd + args, cwd=_m().PROJECT_ROOT if cwd is None else cwd, capture_output=True,
-        text=True, encoding="utf-8", errors="replace", check=check,
-        **(_no_prompt_git_kwargs() if network else {}))
+    terminal prompt so an HTTP 401 fails fast instead of hanging, and bounds the wait."""
+    try:
+        return subprocess.run(
+            git_cmd + args, cwd=_m().PROJECT_ROOT if cwd is None else cwd, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", check=check,
+            **({"timeout": NETWORK_GIT_TIMEOUT_SECONDS, **_no_prompt_git_kwargs()} if network else {}))
+    except subprocess.TimeoutExpired as exc:
+        # subprocess.run already killed the child; the checkout stays consistent because
+        # fetch writes to tmp_pack_* and only renames on success. Report as a failed run
+        # so every caller's existing stderr path prints one clear line.
+        result = subprocess.CompletedProcess(
+            exc.cmd, 124, stdout="",
+            stderr=f"git {args[0]} timed out after {NETWORK_GIT_TIMEOUT_SECONDS}s with no response from the remote")
+        if check:
+            raise subprocess.CalledProcessError(124, exc.cmd, output="", stderr=result.stderr) from exc
+        return result
 
 
 def _capture_head_sha(git_cmd, cwd) -> str | None:
@@ -458,14 +475,6 @@ def _run_logged_subprocess(cmd, *, cwd=None, env=None):
         proc.stdout.close()
 
 
-def _require_eidolon_origin(git_cmd):
-    from hermes_cli.eidolon_update_policy import is_official_source
-    origin = _git_run(git_cmd, ["remote", "get-url", "origin"])
-    if origin.returncode or not is_official_source(origin.stdout.strip()):
-        print("✗ Eidolon updates require origin=https://github.com/AetherMesh-AI/Eidolon.git; no upstream fallback.")
-        sys.exit(2)
-
-
 def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     """``hermes update --check``: fetch and report without installing. ``branch_explicit`` is
     True iff --branch was passed (Docker installs print a notice instead of dropping the flag)."""
@@ -485,7 +494,6 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         sys.exit(1)
 
     git_cmd = _base_git_cmd()
-    _require_eidolon_origin(git_cmd)
 
     # Interrupted fetches leave .git/*.lock behind ("File exists" forever); self-heal first.
     from hermes_cli.gitlock import clear_stale_git_locks, clear_stale_tmp_packs
@@ -497,16 +505,24 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     if swept:
         print(f"  (removed {len(swept)} aborted-fetch pack temp file(s))")
 
-    # Recover source history before deciding ancestry; never compare SHA ordering.
+    # Fetch only <branch> (a bare fetch pulls thousands of auto-generated branches). Prefer
+    # upstream only for main (a fork's other branches have no upstream counterpart). Installer
+    # checkouts are shallow: a plain fetch would unshallow them and rev-list would report a
+    # bogus huge "behind" count, so fetch --depth 1 and report presence-only.
     is_shallow = _is_shallow_checkout(git_cmd)
+    depth_args = ["--depth", "1"] if is_shallow else []
 
-    if branch != "main":
-        print("✗ Eidolon updates target main only.")
-        sys.exit(2)
-    print("→ Fetching Eidolon origin/main...")
-    fetch_result = _git_run(git_cmd, ["fetch", "--no-tags"] + (["--unshallow"] if is_shallow else []) + ["origin", "+refs/heads/main:refs/remotes/origin/main"], network=True)
-    compare_branch = "origin/main"
-    is_shallow = False  # Complete source ancestry, not release or SHA ordering.
+    # Probe locally for an 'upstream' remote before a network fetch non-forks always fail.
+    fetch_result = None
+    if branch == "main" and _git_run(git_cmd, ["remote", "get-url", "upstream"]).returncode == 0:
+        print("→ Fetching from upstream...")
+        fetch_result = _git_run(git_cmd, ["fetch"] + depth_args + ["upstream", branch], network=True)
+    if fetch_result is not None and fetch_result.returncode == 0:
+        compare_branch = f"upstream/{branch}"
+    else:
+        print("→ Fetching from origin...")
+        fetch_result = _git_run(git_cmd, ["fetch"] + depth_args + ["origin", branch], network=True)
+        compare_branch = f"origin/{branch}"
 
     if fetch_result.returncode != 0:
         _print_fetch_failure(fetch_result.stderr)
@@ -518,10 +534,17 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         print(f"✗ Branch '{branch}' not found on {compare_branch.split('/', 1)[0]}.")
         sys.exit(1)
 
-    from hermes_cli.eidolon_update_policy import relation
-    if relation(_m().PROJECT_ROOT) == "diverged":
-        print("✗ Eidolon source history diverged; automatic update refused.")
-        sys.exit(2)
+    if is_shallow:
+        # No history across the shallow boundary: compare tip SHAs, then recover the
+        # exact count via the GitHub compare API (complete graph).
+        head_sha, target_sha = _tip_shas(git_cmd, compare_branch)
+        if head_sha and target_sha and head_sha == target_sha:
+            print("✓ Already up to date.")
+            return
+        from hermes_cli.banner import _github_compare_behind
+        # counted == 0 means local-ahead, not behind; None means the API could not count.
+        _print_update_check_result(_github_compare_behind(head_sha, target_sha), compare_branch)
+        return
 
     rev_result = _git_run(git_cmd, ["rev-list", f"HEAD..{compare_branch}", "--count"], check=True)
     _print_update_check_result(int(rev_result.stdout.strip()), compare_branch)
@@ -550,9 +573,9 @@ def _print_update_check_result(behind: int | None, compare_branch: str) -> None:
         print("✓ Already up to date.")
         return
     if behind is not None:
-        print(f"⚕ Update available: {behind} {'commit' if behind == 1 else 'commits'} behind {compare_branch}.")
+        print(f"☤ Update available: {behind} {'commit' if behind == 1 else 'commits'} behind {compare_branch}.")
     else:
-        print(f"⚕ Update available (behind {compare_branch}).")
+        print(f"☤ Update available (behind {compare_branch}).")
     from hermes_cli.config import recommended_update_command
     print(f"  Run '{recommended_update_command()}' to install.")
 
@@ -1029,7 +1052,6 @@ def _prepare_git_command() -> tuple[bool, list, bool]:
         sys.exit(1)
 
     git_cmd = _base_git_cmd()
-    _require_eidolon_origin(git_cmd)
     if sys.platform == "win32" and git_dir.exists():
         _git_run(git_cmd, ["config", "windows.appendAtomically", "false"])
     # A broken Git-for-Windows trampoline refuses every call with a "BUG (fork bomb)" guard;
@@ -1101,7 +1123,7 @@ def _current_branch_name(git_cmd, *, check: bool = False) -> str:
 
 def _handle_update_called_process_error(
     e, args, gateway_mode: bool, had_desktop_app_before_update: bool) -> None:
-    """Report Git/installer failure and exit 1; Eidolon's policy disables ZIP fallback."""
+    """Git/installer failure: ZIP-fallback when safe, else report and ``sys.exit(1)``."""
     stage = _format_update_failure_stage(e)
     if _should_zip_fallback_on_update_error(e):
         print(f"⚠ {stage}: {e}")
@@ -1245,7 +1267,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
     opts = _resolve_update_options(args, gateway_mode)
     gw_input_fn, assume_yes = opts.gw_input_fn, opts.assume_yes
 
-    print("⚕ Updating Hermes Agent...")
+    print("☤ Updating Eidolon...")
     print()
 
     _pre_update_plan = _begin_update_receipt_and_plan(args)
@@ -1295,9 +1317,6 @@ def _cmd_update_impl(args, gateway_mode: bool):
     try:
         # Scoped fetch: a bare `git fetch origin` pulls thousands of branches and can stall.
         branch = _m()._resolve_update_branch(args)
-        if branch != "main":
-            print("✗ Eidolon updates target main only.")
-            sys.exit(2)
 
         # Self-heal abandoned .git/*.lock files (crashed fetch) or the fetch fails "File exists".
         from hermes_cli.gitlock import clear_stale_git_locks, clear_stale_tmp_packs
@@ -1307,24 +1326,21 @@ def _cmd_update_impl(args, gateway_mode: bool):
         swept = clear_stale_tmp_packs(_m().PROJECT_ROOT)
         if swept:
             print("  (removed %d aborted-fetch pack temp file(s))" % len(swept))
-
         # Surface autostashes left by earlier updates (--keep-stash, failed restores).
         # Surface autostash entries left behind by earlier updates (#63717 problem 6) — parked --keep-stash
         # runs and failed restores preserve the stash but nothing ever mentioned it again.
         _m()._warn_orphaned_update_autostashes(git_cmd, _m().PROJECT_ROOT)
 
         print("→ Fetching updates...")
-        shallow = _git_run(git_cmd, ["rev-parse", "--is-shallow-repository"]).stdout.strip() == "true"
-        fetch_result = _git_run(git_cmd, ["fetch", "--no-tags"] + (["--unshallow"] if shallow else []) + ["origin", "+refs/heads/main:refs/remotes/origin/main"], network=True)
+        # Eidolon build identity needs complete first-parent history back to its
+        # immutable anchor. Keep upstream's scoped fetch, completing shallow
+        # installer checkouts before the normal pull/build handoff.
+        history_args = ["--unshallow"] if _is_shallow_checkout(git_cmd) else []
+        fetch_result = _git_run(git_cmd, ["fetch", *history_args, "origin", branch], network=True)
         if fetch_result.returncode != 0:
             _print_fetch_failure(fetch_result.stderr)
             sys.exit(1)
 
-        from hermes_cli.eidolon_update_policy import relation as source_relation
-        relation = source_relation(_m().PROJECT_ROOT)
-        if relation in ("diverged", "unknown"):
-            print(f"✗ Eidolon source history is {relation}; refusing automatic rewrite. Resolve manually.")
-            sys.exit(2)
         current_branch = _current_branch_name(git_cmd, check=True)
         _plan = _prepare_checkout_for_update(
             git_cmd, branch, current_branch, is_fork=is_fork, assume_yes=assume_yes,

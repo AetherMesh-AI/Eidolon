@@ -9,10 +9,10 @@ from hermes_cli import __version__
 def test_build_identity_reads_stamp_without_spawning_or_changing_target(tmp_path, monkeypatch):
     import json
     from hermes_cli import eidolon_update_policy as policy
-    from hermes_cli.eidolon_version import fallback
+    from hermes_cli.eidolon_version import ANCHOR_COMMIT, fallback
     value = fallback('a' * 40, False)
     value.update(version='0.1.12', versionSource='stamp', baseTag='alpha-v0.1.0',
-                 baseCommit='b' * 40, distance=12)
+                 baseCommit=ANCHOR_COMMIT, distance=12)
     package = tmp_path / 'hermes_cli'
     package.mkdir()
     (package / '_build_identity.json').write_text(json.dumps(value))
@@ -82,13 +82,15 @@ def test_git_ancestry_not_hash_order(tmp_path, monkeypatch):
     assert p.build_identity(work)['version'] == __version__
 
 
-def test_legacy_sync_hooks_cannot_push_or_fetch(tmp_path, monkeypatch):
+def test_fork_sync_reuses_upstream_force_with_lease(tmp_path, monkeypatch):
     from hermes_cli import update_cmd_git
     calls = []
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append((a, k)))
-    assert update_cmd_git._sync_fork_with_upstream(["git"], tmp_path) is False
-    assert update_cmd_git._sync_with_upstream_if_needed(["git"], tmp_path) is False
-    assert calls == []
+    def git_ok(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
+    monkeypatch.setattr(update_cmd_git, '_git_ok', git_ok)
+    assert update_cmd_git._sync_fork_with_upstream(['git'], tmp_path) is True
+    assert calls == [((['git'], ['push', 'origin', 'main', '--force-with-lease'], tmp_path), {'network': True})]
 
 
 def test_windows_git_error_dispatcher_refuses_archive(tmp_path, monkeypatch):
