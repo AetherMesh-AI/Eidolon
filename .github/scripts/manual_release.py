@@ -33,10 +33,38 @@ def validate_inputs(tag, body, version, mode='new-release'):
     if not re.fullmatch(r'alpha-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag):
         raise ValueError('Tag must be alpha-vMAJOR.MINOR.PATCH (no leading zeroes)')
     if mode == 'new-release' and tag != 'alpha-v' + version:
-        raise ValueError('Tag must match committed desktop version; bump source metadata first')
+        raise ValueError('Tag must match verified Git-derived desktop version')
     if not body.strip() or '\0' in body or len(body.encode('utf-8')) > 60000:
         raise ValueError('Changelog Markdown must be nonblank, NUL-free and <= 60000 UTF-8 bytes')
     return body
+
+
+def verified_build_identity():
+    """Use the desktop's authoritative Python owner; never infer from package.json.
+
+    Manual releases require fresh, complete Git evidence, not fallback/stamp reuse.
+    This command is local-only and performs no fetches or metadata writes.
+    """
+    identity = json.loads(subprocess.check_output([
+        sys.executable, str(ROOT / 'hermes_cli/eidolon_version.py'),
+        '--repo-root', str(ROOT), '--require-verified'], cwd=ROOT, text=True))
+    sha = os.environ.get('GITHUB_SHA', '')
+    if (not re.fullmatch(r'[0-9a-f]{40}', sha) or sha == '0' * 40
+            or identity.get('commit') != sha or identity.get('versionSource') != 'git-derived'):
+        raise ValueError('Release requires fresh Git-derived identity at exact GITHUB_SHA')
+    if os.environ.get('GITHUB_ACTIONS') == 'true' and identity.get('dirty') is not False:
+        raise ValueError('Release requires a clean source tree at build time')
+    return identity
+
+
+def verify_packaged_identity(stamp, identity):
+    # Ignore incidental build timestamps/source labels, never version proof fields.
+    fields = ('schemaVersion', 'commit', 'shortCommit', 'version', 'channel',
+              'repository', 'updateBranch', 'baseTag', 'baseCommit', 'distance', 'versionSource')
+    if not isinstance(stamp, dict) or any(stamp.get(key) != identity.get(key) for key in fields):
+        raise ValueError('Packaged install stamp must match verified Git-derived identity')
+    if os.environ.get('GITHUB_ACTIONS') == 'true' and stamp.get('dirty') is not False:
+        raise ValueError('Release requires a clean source tree at build time')
 
 
 def asset_names(tag):
@@ -311,6 +339,8 @@ child.onExit(({exitCode}) => {
 
 
 def package(tag, platform, arch, temp):
+    identity = verified_build_identity()
+    version = identity['version']
     variant = next(v for v in VARIANTS if v[:2] == (platform, arch))
     actual = subprocess.check_output(['node', '-p', 'process.platform+"/"+process.arch'], text=True).strip()
     if actual != platform + '/' + arch:
@@ -347,7 +377,7 @@ def package(tag, platform, arch, temp):
         infos = list(unpacked.rglob('PackageInfo'))
         if len(infos) != 1:
             raise ValueError('Expected exactly one PKG component')
-        validate_pkg_info(infos[0].read_text(), 'alpha-v' + json.loads((DESKTOP / 'package.json').read_text())['version'])
+        validate_pkg_info(infos[0].read_text(), 'alpha-v' + version)
     elif platform == 'linux':
         data = artifact.read_bytes()
         if data[8:11] != b'AI\x02' or binary_target(data) != (platform, arch):
@@ -389,11 +419,7 @@ def package(tag, platform, arch, temp):
     if len(stamp_paths) != 1:
         raise ValueError('Expected one packaged install stamp')
     stamp = json.loads(stamp_paths[0].read_text())
-    if (stamp['commit'] != os.environ['GITHUB_SHA'] or stamp['version'] != json.loads((DESKTOP / 'package.json').read_text())['version']
-            or stamp['channel'] != 'alpha' or stamp['repository'] != 'AetherMesh-AI/Eidolon'):
-        raise ValueError('Packaged install stamp must match source SHA/version/channel/repository')
-    if os.environ.get('GITHUB_ACTIONS') == 'true' and stamp['dirty'] is not False:
-        raise ValueError('Release requires a clean source tree at build time')
+    verify_packaged_identity(stamp, identity)
     # Electron Node mode loads the packaged addon with Electron's actual ABI,
     # without starting the app/UI or contacting model/backend services.
     pty_roots = list(unpacked.rglob('app.asar.unpacked/dist/node_modules/node-pty'))
@@ -403,18 +429,18 @@ def package(tag, platform, arch, temp):
     assets = temp / 'assets'; assets.mkdir()
     artifact.rename(assets / name)
     write_package_receipt(assets / name, temp / 'proofs', tag, os.environ['GITHUB_SHA'],
-                          json.loads((DESKTOP / 'package.json').read_text())['version'], platform, arch)
+                          version, platform, arch)
     print(json.dumps(file_record(assets / name)))
 
 
 def main():
     tag = os.environ['RELEASE_TAG']; body = os.environ['RELEASE_CHANGELOG']
-    version = json.loads((DESKTOP / 'package.json').read_text())['version']
     mode = os.environ.get('RELEASE_MODE', 'new-release')
-    validate_inputs(tag, body, version, mode)
     command = sys.argv[1]
     if mode == 'replacement-build-only' and command == 'publish':
         raise ValueError('Replacement is build-only; publication requires separate review')
+    version = verified_build_identity()['version']
+    validate_inputs(tag, body, version, mode)
     if command == 'preflight':
         if mode == 'replacement-build-only':
             replacement_snapshot(API(), tag)

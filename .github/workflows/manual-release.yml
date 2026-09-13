@@ -12,7 +12,7 @@ on:
           - new-release
           - replacement-build-only
       version_tag:
-        description: 'New tag must match desktop version; replacement build must use alpha-v0.1.0'
+        description: 'New tag must match verified Git-derived version; replacement build must use alpha-v0.1.0'
         type: string
         required: true
         default: alpha-v0.1.0
@@ -43,9 +43,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - name: Offline release policy tests
-        run: python3 -m unittest discover -s .github/scripts -p test_manual_release.py
+        run: python3 -m unittest discover -s .github/scripts -p 'test*release*.py'
       - name: Validate inputs and refuse existing tags or releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,6 +87,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -144,6 +148,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -181,6 +187,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

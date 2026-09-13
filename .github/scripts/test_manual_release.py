@@ -73,6 +73,11 @@ class SmokeTests(unittest.TestCase):
 
 
 class ReplacementTests(unittest.TestCase):
+    def setUp(self):
+        identity = patch.object(r, 'verified_build_identity', return_value={'version': '0.1.1'})
+        identity.start()
+        self.addCleanup(identity.stop)
+
     def test_explicit_build_only_mode_never_reaches_publisher(self):
         version = json.loads((r.DESKTOP / 'package.json').read_text())['version']
         env = {'RELEASE_TAG': 'alpha-v0.1.0', 'RELEASE_CHANGELOG': '# Notes',
@@ -229,6 +234,11 @@ class InstallerTests(unittest.TestCase):
 
 
 class PackagingCommandTests(unittest.TestCase):
+    def setUp(self):
+        identity = patch.object(r, 'verified_build_identity', return_value={'version': '0.1.1'})
+        identity.start()
+        self.addCleanup(identity.stop)
+
     def test_markdown_materialized_only_in_runner_temp_as_exact_data(self):
         body = '# Notes\r\n$(touch NEVER_EXECUTE)\n`echo no`\n雪 "quoted"\n'
         with tempfile.TemporaryDirectory() as td:
