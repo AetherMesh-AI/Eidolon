@@ -2,6 +2,27 @@ import fs from 'node:fs'
 
 const INSTALL_STAMP_SCHEMA_VERSION = 1
 
+type VersionStamp = {
+  schemaVersion?: number; version?: string | null; channel?: string | null; commit?: string
+  shortCommit?: string; dirty?: boolean | null; versionSource?: string
+  baseTag?: string; baseCommit?: string; distance?: number
+  repository?: string; updateBranch?: string
+}
+
+function verifiedVersion(stamp: VersionStamp | null): boolean {
+  if (!stamp || stamp.schemaVersion !== 1 || stamp.channel !== 'alpha' ||
+      stamp.repository !== 'AetherMesh-AI/Eidolon' || stamp.updateBranch !== 'main' ||
+      !['git-derived', 'stamp'].includes(stamp.versionSource || '') ||
+      !/^[0-9a-f]{40}$/.test(stamp.commit || '') || /^0+$/.test(stamp.commit || '') ||
+      !/^[0-9a-f]{40}$/.test(stamp.baseCommit || '') || /^0+$/.test(stamp.baseCommit || '') ||
+      stamp.shortCommit !== stamp.commit?.slice(0, 12) ||
+      !Number.isSafeInteger(stamp.distance) || (stamp.distance ?? -1) < 0 ||
+      ![true, false, null].includes(stamp.dirty as boolean | null)) return false
+  const base = /^alpha-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(stamp.baseTag || '')
+  return !!base && (stamp.distance === 0) === (stamp.commit === stamp.baseCommit) &&
+    stamp.version === `${base[1]}.${base[2]}.${Number(base[3]) + stamp.distance!}`
+}
+
 /** Packaged location first, dev build second; unknown dirtiness stays unknown. */
 export function readInstallStampFromPaths(candidates: string[], warn = console.warn) {
   for (const p of candidates) {
@@ -19,6 +40,16 @@ export function readInstallStampFromPaths(candidates: string[], warn = console.w
           builtAt: parsed.builtAt || null,
           dirty: typeof parsed.dirty === 'boolean' ? parsed.dirty : null,
           source: parsed.source || null,
+          version: verifiedVersion(parsed) ? parsed.version as string : null,
+          channel: verifiedVersion(parsed) ? 'alpha' : null,
+          versionSource: verifiedVersion(parsed) ? parsed.versionSource as string : 'fallback',
+          shortCommit: parsed.shortCommit,
+          repository: parsed.repository,
+          updateBranch: parsed.updateBranch,
+          baseTag: parsed.baseTag,
+          baseCommit: parsed.baseCommit,
+
+          distance: parsed.distance,
           path: p
         })
       }
@@ -35,9 +66,10 @@ export function formatInstallStamp(stamp: { commit: string; branch?: string | nu
 }
 
 /** Shared by the renderer version IPC, including absent/legacy stamp cases. */
-export function formatInstallVersion(stamp: { commit?: string; dirty?: boolean | null } | null) {
+export function formatInstallVersion(stamp: VersionStamp | null) {
   const commit = stamp?.commit
   const exact = typeof commit === 'string' && /^[0-9a-f]{40}$/.test(commit) && !/^0+$/.test(commit)
   const dirty = stamp?.dirty === true ? ' (dirty source)' : stamp?.dirty === false ? '' : ' (source status unknown)'
-  return `0.1.1 alpha · ${exact ? commit : 'unknown commit'}${dirty}`
+  const verified = verifiedVersion(stamp)
+  return `${verified ? stamp!.version : '0.1.1'} alpha · ${exact ? commit.slice(0, 12) : 'unknown commit'}${dirty}${verified ? '' : ' (version unavailable/unverified)'}`
 }

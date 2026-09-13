@@ -1,4 +1,6 @@
 .DS_Store
+# Generated at build/editable-install time, never per-commit bookkeeping.
+/hermes_cli/_build_identity.json
 /venv/
 /venv.old/
 /venv.stale.runtime-*/

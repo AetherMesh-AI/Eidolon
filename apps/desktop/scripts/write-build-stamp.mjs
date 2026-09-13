@@ -28,7 +28,7 @@
 
 import { mkdirSync, writeFileSync } from "fs"
 import { resolve, join, relative } from "path"
-import { execSync } from "child_process"
+import { execSync, execFileSync } from "child_process"
 
 import { isMain } from "./utils.mjs"
 
@@ -110,8 +110,28 @@ export function isFallbackCommit(commit) {
   return typeof commit === "string" && /^0{7,40}$/.test(commit)
 }
 
+/** Python owns the derivation. A broken/missing generator is a build error. */
+export function resolveBuildIdentity({ repoRoot = REPO_ROOT, env = process.env } = {}) {
+  const python = env.HERMES_PYTHON || env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
+  return JSON.parse(execFileSync(python, [join(repoRoot, 'hermes_cli', 'eidolon_version.py'),
+    '--repo-root', repoRoot], { cwd: repoRoot, env, encoding: 'utf8' }))
+}
+
+export function writeBuildStamp({ repoRoot = REPO_ROOT, env = process.env,
+  outFile = join(repoRoot, 'apps', 'desktop', 'build', 'install-stamp.json') } = {}) {
+  const identity = resolveBuildIdentity({ repoRoot, env })
+  const metadata = resolveStamp({ repoRoot, env })
+  const payload = { ...identity, schemaVersion: STAMP_SCHEMA_VERSION,
+    commit: identity.commit || FALLBACK_COMMIT,
+    branch: metadata.branch, builtAt: new Date().toISOString(), source: metadata.source }
+  // The owner supplies dirtiness, including null when status failed.
+  mkdirSync(resolve(outFile, '..'), { recursive: true })
+  writeFileSync(outFile, JSON.stringify(payload, null, 2) + '\n', 'utf8')
+  return payload
+}
+
 function main() {
-  const stamp = resolveStamp()
+  const stamp = writeBuildStamp()
   if (!stamp || !stamp.commit) {
     // Should not happen — fromFallback() always provides a commit.
     console.error(
@@ -145,21 +165,7 @@ function main() {
     )
   }
 
-  const payload = {
-    schemaVersion: STAMP_SCHEMA_VERSION,
-    version: "0.1.1",
-    channel: "alpha",
-    repository: "AetherMesh-AI/Eidolon",
-    updateBranch: "main",
-    commit: stamp.commit,
-    branch: stamp.branch,
-    builtAt: new Date().toISOString(),
-    dirty: stamp.dirty,
-    source: stamp.source
-  }
 
-  mkdirSync(OUT_DIR, { recursive: true })
-  writeFileSync(OUT_FILE, JSON.stringify(payload, null, 2) + "\n", "utf8")
   console.log(
     "[write-build-stamp] wrote " +
       relative(REPO_ROOT, OUT_FILE) +

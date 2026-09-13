@@ -5,6 +5,26 @@ from pathlib import Path
 import subprocess
 from hermes_cli import __version__
 
+
+def test_build_identity_reads_stamp_without_spawning_or_changing_target(tmp_path, monkeypatch):
+    import json
+    from hermes_cli import eidolon_update_policy as policy
+    from hermes_cli.eidolon_version import fallback
+    value = fallback('a' * 40, False)
+    value.update(version='0.1.12', versionSource='stamp', baseTag='alpha-v0.1.0',
+                 baseCommit='b' * 40, distance=12)
+    package = tmp_path / 'hermes_cli'
+    package.mkdir()
+    (package / '_build_identity.json').write_text(json.dumps(value))
+    def forbidden(*args, **kwargs): raise AssertionError('runtime spawned Git')
+    monkeypatch.setattr(subprocess, 'run', forbidden)
+    identity = policy.build_identity(tmp_path)
+    assert identity['version'] == '0.1.12'
+    assert identity['channel'] == 'alpha'
+    assert identity['repository'] == 'AetherMesh-AI/Eidolon'
+    assert identity['updateBranch'] == 'main'
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def policy():

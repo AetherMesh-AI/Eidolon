@@ -1758,3 +1758,16 @@ def test_docker_daemon_probe_uses_version_not_info(monkeypatch):
     doctor_tools._check_docker_backend("docker", False, [])
 
     assert calls and calls[0][:2] == ["docker", "version"]
+
+
+def test_derived_runtime_does_not_mismatch_floor_but_declaration_drift_does(monkeypatch):
+    import hermes_cli
+    from hermes_cli.eidolon_version import COMPATIBILITY_VERSION
+    monkeypatch.setattr(hermes_cli, '__version__', '0.1.321')
+    monkeypatch.setattr(doctor_platform, '_read_pyproject_version', lambda: COMPATIBILITY_VERSION)
+    issues = []
+    doctor_platform._check_version_consistency(issues)
+    assert not issues
+    monkeypatch.setattr(doctor_platform, '_read_pyproject_version', lambda: '9.9.9')
+    doctor_platform._check_version_consistency(issues)
+    assert issues

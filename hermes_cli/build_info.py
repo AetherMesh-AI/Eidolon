@@ -91,19 +91,19 @@ def get_code_identity(refresh: bool = False) -> dict:
         sha = get_build_sha(short=0)
         if sha:
             source = "build-file"
-    version: Optional[str] = None
-    try:
-        import tomllib
-        with open(project_root / "pyproject.toml", "rb") as fh:  # windows-footgun: ok — binary mode, tomllib requires bytes
-            raw_version = tomllib.load(fh).get("project", {}).get("version")
-        version = str(raw_version) if raw_version else None
-    except Exception:
-        version = None
+    from hermes_cli.eidolon_version import runtime_identity
+    identity = runtime_identity(project_root)
+    if not sha and identity['commit']:
+        sha = identity['commit']
+        source = 'build-identity'
     _code_identity_cache = {
         "sha": sha,
-        "short_sha": sha[:8] if sha else None,
-        "version": version,
-        "source": source}
+        "short_sha": sha[:12] if sha else None,
+        "version": identity['version'],
+        "source": source,
+        "version_source": identity['versionSource'],
+        "channel": identity['channel'],
+        "dirty": identity['dirty']}
     return dict(_code_identity_cache)
 
 

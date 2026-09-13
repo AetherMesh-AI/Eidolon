@@ -25,9 +25,13 @@ use ``build_editable``, which does NOT call ``bdist_wheel`` — it calls
 """
 
 import os
+import importlib.util
+from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.sdist import sdist
+from setuptools.command.build_py import build_py
+from setuptools.command.build_ext import build_ext
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,7 +57,30 @@ class _GuardedSdist(sdist):
         return super().run(*args, **kwargs)
 
 
-cmdclass = {"sdist": _GuardedSdist}
+def _stamp_identity():
+    # Load the stdlib-only owner without importing the installed CLI package.
+    spec = importlib.util.spec_from_file_location(
+        "eidolon_build_version", Path(_ROOT) / "hermes_cli/eidolon_version.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.write_identity(Path(_ROOT))
+
+
+class _StampedBuildPy(build_py):
+    def run(self):
+        _stamp_identity()
+        super().run()
+
+
+class _StampedBuildExt(build_ext):
+    def run(self):
+        if getattr(self, "editable_mode", False):
+            _stamp_identity()
+        super().run()
+
+
+cmdclass = {"sdist": _GuardedSdist, "build_py": _StampedBuildPy,
+            "build_ext": _StampedBuildExt}
 
 # bdist_wheel is only available when the `wheel` package is installed.
 # setuptools.build_meta.build_wheel() calls it internally, so the guard

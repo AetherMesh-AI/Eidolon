@@ -3,8 +3,10 @@
 import os
 import sys
 
-__version__ = "0.1.1"
-__channel__ = "alpha"
+from .eidolon_version import CHANNEL, runtime_identity
+
+__version__ = runtime_identity()['version']
+__channel__ = CHANNEL
 __release_date__ = "2026.9.7"
 
 

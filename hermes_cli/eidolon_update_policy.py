@@ -37,16 +37,6 @@ def relation(root: Path, local: str = 'HEAD', target: str = 'origin/main') -> st
 
 
 def build_identity(root: Path | None = None) -> dict:
-    """Exact source HEAD plus dirty state; non-Git copies report unknown honestly."""
-    root = root or Path(__file__).resolve().parents[1]
-    result = {'version': '0.1.1', 'channel': 'alpha', 'commit': None, 'dirty': None}
-    if not (root / '.git').exists():
-        return result
-    try:
-        sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, stderr=subprocess.DEVNULL, text=True, timeout=3).strip()
-        if re.fullmatch(r'[0-9a-f]{40}', sha):
-            result['commit'] = sha
-            result['dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=root, stderr=subprocess.DEVNULL, text=True, timeout=3).strip())
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return result
+    """Shared build metadata; version never participates in update eligibility."""
+    from hermes_cli.eidolon_version import runtime_identity
+    return runtime_identity(root)

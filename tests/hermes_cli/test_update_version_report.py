@@ -13,10 +13,15 @@ from hermes_cli import update_cmd
 
 
 def _write_pyproject(root: Path, version: str) -> None:
-    (root / "pyproject.toml").write_text(
-        f'[project]\nname = "hermes-agent"\nversion = "{version}"\n',
-        encoding="utf-8",
-    )
+    # Package declarations stay at the floor; only generated identity is current.
+    import json
+    from hermes_cli.eidolon_version import fallback
+    (root / "pyproject.toml").write_text('[project]\nversion = "0.1.1"\n')
+    (root / 'hermes_cli').mkdir(exist_ok=True)
+    identity = fallback('a' * 40, False)
+    identity.update(version=version, baseTag=f'alpha-v{version}', baseCommit='a' * 40,
+                    distance=0, versionSource='stamp')
+    (root / 'hermes_cli/_build_identity.json').write_text(json.dumps(identity))
 
 
 @pytest.fixture()
@@ -29,6 +34,16 @@ def fake_root(tmp_path, monkeypatch):
 
 
 class TestReadProjectVersion:
+    def test_refreshes_after_build_in_same_process(self, fake_root):
+        _write_pyproject(fake_root, '0.1.12')
+        assert update_cmd._read_project_version() == '0.1.12'
+        _write_pyproject(fake_root, '0.1.13')
+        assert update_cmd._update_complete_message('0.1.12') == '✓ Update complete! (v0.1.12 → v0.1.13)'
+
+    def test_static_floor_is_not_a_development_identity(self, fake_root):
+        (fake_root / 'pyproject.toml').write_text('[project]\nversion = "9.9.9"\n')
+        assert update_cmd._read_project_version() is None
+
     def test_reads_version(self, fake_root):
         _write_pyproject(fake_root, "0.20.0")
         assert update_cmd._read_project_version() == "0.20.0"

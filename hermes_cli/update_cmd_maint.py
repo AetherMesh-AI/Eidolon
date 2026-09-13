@@ -359,14 +359,15 @@ def _print_update_completion(message: str) -> None:
 
 
 def _read_project_version() -> str | None:
-    """``version`` from the checkout's pyproject.toml (not importlib.metadata, which still
-    describes the OLD version after a pull). None on any failure — cosmetic, never breaks."""
+    """Fresh verified build identity, not cached imports or static dist-info.
+
+    Cosmetic only: never derives Git history or changes update eligibility.
+    """
     from hermes_cli.update_cmd import _m
     try:
-        import tomllib
-        with open(_m().PROJECT_ROOT / "pyproject.toml", "rb") as fh:  # windows-footgun: ok — binary mode, tomllib requires bytes
-            version = tomllib.load(fh).get("project", {}).get("version")
-        return str(version) if version else None
+        from hermes_cli.eidolon_version import runtime_identity, validate_identity
+        identity = validate_identity(runtime_identity(_m().PROJECT_ROOT))
+        return identity['version'] if identity else None
     except Exception:
         return None
 

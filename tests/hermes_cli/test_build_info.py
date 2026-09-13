@@ -33,3 +33,32 @@ def test_get_build_sha_respects_short_argument(tmp_path):
         assert build_info.get_build_sha(short=-1) == full_sha
 
 
+def test_generated_version_cache_refresh_and_spawn_free(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from hermes_cli import build_info
+    from hermes_cli.eidolon_version import fallback
+    package = tmp_path / 'hermes_cli'
+    package.mkdir()
+    monkeypatch.setattr(build_info, '__file__', str(package / 'build_info.py'))
+    monkeypatch.setattr(build_info, '_BUILD_SHA_FILE', tmp_path / '.hermes_build_sha')
+    monkeypatch.setattr(build_info, '_code_identity_cache', None)
+    def forbidden(*a, **kw): raise AssertionError('runtime spawned a process')
+    monkeypatch.setattr(subprocess, 'run', forbidden)
+    monkeypatch.setattr(subprocess, 'Popen', forbidden)
+    value = fallback('a' * 40, False)
+    value.update(version='0.1.12', versionSource='stamp', baseTag='alpha-v0.1.0',
+                 baseCommit='b' * 40, distance=12)
+    stamp = package / '_build_identity.json'
+    stamp.write_text(json.dumps(value))
+    first = build_info.get_code_identity()
+    assert first['version'] == '0.1.12' and first['sha'] == 'a' * 40
+    assert first['version_source'] == 'stamp' and first['channel'] == 'alpha'
+    value.update(version='0.1.13', distance=13)
+    stamp.write_text(json.dumps(value))
+    assert build_info.get_code_identity()['version'] == '0.1.12'
+    assert build_info.get_code_identity(refresh=True)['version'] == '0.1.13'
+    stamp.unlink()
+    assert build_info.get_code_identity(refresh=True)['version_source'] == 'fallback'
+
+

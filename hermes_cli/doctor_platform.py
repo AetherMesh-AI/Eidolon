@@ -138,10 +138,13 @@ def _read_pyproject_version() -> str | None:
 
 
 def _check_version_consistency(issues: list[str]) -> None:
-    """Detect pyproject.toml vs hermes_cli.__version__ drift (a conflict resolution can revert one but not the
-    other). Silent no-op for installed wheels (no pyproject)."""
+    """Detect declaration drift, not the intentional Git-derived runtime version.
+
+    Python dist-info and source manifests retain a compatibility floor.
+    Silent no-op for installed wheels (no pyproject).
+    """
     try:
-        from hermes_cli import __version__ as init_version
+        from hermes_cli.eidolon_version import COMPATIBILITY_VERSION as init_version
     except Exception:
         return
     pyproject_version = _read_pyproject_version()
@@ -149,8 +152,8 @@ def _check_version_consistency(issues: list[str]) -> None:
         return
     if pyproject_version == init_version:
         return check_ok("Version files consistent", f"({init_version})")
-    _fail_and_issue("Version mismatch between source files", f"(pyproject.toml {pyproject_version} != hermes_cli/__init__.py {init_version})",
-                    "Re-sync version files (e.g. run 'hermes update', or set hermes_cli/__init__.py __version__ to match pyproject.toml)", issues)
+    _fail_and_issue("Version mismatch between source files", f"(pyproject.toml {pyproject_version} != compatibility floor {init_version})",
+                    "Re-sync pyproject.toml and eidolon_version.COMPATIBILITY_VERSION declarations", issues)
 
 
 def _check_s6_supervision(issues: list[str]) -> None:

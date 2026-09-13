@@ -67,9 +67,13 @@ for (const status of ['clean', 'untracked', 'tracked', 'detached', 'failed']) {
       for (const name of ['write-build-stamp.mjs', 'utils.mjs']) {
         fs.copyFileSync(new URL(name, import.meta.url), path.join(scripts, name))
       }
+      fs.mkdirSync(path.join(dir, 'hermes_cli'))
+      fs.copyFileSync(new URL('../../../hermes_cli/eidolon_version.py', import.meta.url), path.join(dir, 'hermes_cli/eidolon_version.py'))
+      fs.writeFileSync(path.join(dir, '.gitignore'), 'apps/desktop/build/\nhermes_cli/_build_identity.json\n')
       const git = (...args) => execFileSync('/usr/bin/git', args, { cwd: dir, stdio: 'pipe' })
-      git('init', '-q'); git('add', 'apps')
+      git('init', '-q', '-b', 'main'); git('add', '.')
       git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
+      git('tag', 'alpha-v0.1.0')
       const env = { ...process.env }
       if (status === 'detached') git('checkout', '--detach')
       if (status === 'tracked') fs.appendFileSync(path.join(scripts, 'write-build-stamp.mjs'), '\n// tracked fixture change\n')
@@ -87,6 +91,8 @@ for (const status of ['clean', 'untracked', 'tracked', 'detached', 'failed']) {
       assert.equal(payload.dirty, expected)
       const stamp = readInstallStampFromPaths([artifact])
       assert.equal(stamp.dirty, expected)
+      assert.equal(stamp.version, '0.1.0')
+      assert.equal(stamp.distance, 0)
       const version = formatInstallVersion(stamp)
       if (expected === null) assert.match(version, /source status unknown/)
       else if (expected) assert.match(version, /dirty source/)

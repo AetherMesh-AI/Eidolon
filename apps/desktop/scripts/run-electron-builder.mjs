@@ -36,32 +36,49 @@ function electronBuilderCli() {
   return path.join(path.dirname(pkgJson), rel)
 }
 
-const dist = electronDistDir()
-// Local `hermes desktop` builds only ever package (--dir or dist), never
-// publish a GitHub release — no CI workflow drives this script. But the npm
-// lifecycle env sets CI=1 (so esbuild's postinstall doesn't try interactive
-// animations), and electron-builder treats CI=1 as a signal to implicitly
-// resolve a publish target. That resolution reads <projectDir>/.git/config
-// directly — projectDir here is apps/desktop, which has no .git of its own
-// (only the repo root does) and no "repository" field in its package.json —
-// so it fails with "Cannot detect repository by .git/config". Pin publish to
-// "never" so electron-builder skips that lookup entirely.
-const args = ["--publish", "never"]
-if (dist && fs.existsSync(distBinary(dist))) {
-  args.push(`-c.electronDist=${dist}`)
-} else {
-  console.warn(
-    "[run-electron-builder] no local electron dist; electron-builder will fetch " +
-      "via @electron/get (electronVersion + ELECTRON_MIRROR)."
-  )
-}
-args.push(...process.argv.slice(2))
+import { isMain } from './utils.mjs'
+import { resolveBuildIdentity } from './write-build-stamp.mjs'
 
-const result = spawnSync(process.execPath, [electronBuilderCli(), ...args], {
-  stdio: "inherit",
-})
-if (result.error) {
-  console.error(`[run-electron-builder] spawn failed: ${result.error.message}`)
-  process.exit(1)
+/** Refuse fallback, stale, or hand-edited stamps before loading the packager. */
+export function buildArguments({
+  repoRoot = path.resolve(import.meta.dirname, '../../..'),
+  stampPath = path.join(repoRoot, 'apps/desktop/build/install-stamp.json'),
+  argv = process.argv.slice(2),
+} = {}) {
+  const stamp = JSON.parse(fs.readFileSync(stampPath, 'utf8'))
+  const current = resolveBuildIdentity({ repoRoot })
+  if (!['git-derived', 'stamp'].includes(current.versionSource) ||
+      !['git-derived', 'stamp'].includes(stamp.versionSource)) {
+    throw new Error('Native packaging requires a verified Git-derived build identity')
+  }
+  for (const key of ['schemaVersion', 'version', 'channel', 'repository', 'updateBranch',
+    'commit', 'shortCommit', 'dirty', 'baseTag', 'baseCommit', 'distance']) {
+    if (stamp[key] !== current[key]) throw new Error(`Stale or conflicting build identity: ${key}`)
+  }
+  if (argv.some(arg => /(?:extraMetadata\.(?:version|channel)|buildVersion)/.test(arg))) {
+    throw new Error('Build identity overrides are owned by the generated stamp')
+  }
+  return [...argv, `-c.extraMetadata.version=${current.version}`, '--publish', 'never']
 }
-process.exit(result.status == null ? 1 : result.status)
+
+export function runBuilder({ spawn = spawnSync, ...options } = {}) {
+  // Validate first: no packager resolution, download, or launch on refusal.
+  const args = buildArguments(options)
+  const dist = electronDistDir()
+  if (dist && fs.existsSync(distBinary(dist))) {
+    args.push(`-c.electronDist=${dist}`)
+  } else {
+    console.warn('[run-electron-builder] no local electron dist; electron-builder may fetch it.')
+  }
+  const result = spawn(process.execPath, [electronBuilderCli(), ...args], { stdio: 'inherit' })
+  if (result.error) throw result.error
+  return result.status == null ? 1 : result.status
+}
+
+if (isMain(import.meta.url)) {
+  try { process.exitCode = runBuilder() }
+  catch (error) {
+    console.error(`[run-electron-builder] ${error.message}`)
+    process.exitCode = 1
+  }
+}

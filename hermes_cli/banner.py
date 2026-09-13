@@ -55,10 +55,11 @@ def _skin_color(key: str, fallback: str) -> str:
 
 # === ASCII Art & Branding ===
 
-from hermes_cli import __version__ as VERSION, __release_date__ as RELEASE_DATE
+from hermes_cli import __release_date__ as RELEASE_DATE
 from hermes_cli.eidolon_update_policy import build_identity
+from hermes_cli.eidolon_version import format_identity
 _identity = build_identity()
-VERSION = f"{VERSION} alpha · {_identity['commit'] or 'unknown commit'}" + (" (dirty source)" if _identity['dirty'] else "")
+VERSION = format_identity(_identity)
 
 HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
 [bold #FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
